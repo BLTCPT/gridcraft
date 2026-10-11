@@ -1,8 +1,9 @@
 //! CLI-only XMLA probe. Network requests require explicit --send and HTTPS.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented)]
+use gridcraft_engine::analysis::network::{Request, Transport};
 use gridcraft_engine::analysis::xmla::{MAX_BYTES, discover, execute, parse_rowset};
-use std::{io::Read, process::ExitCode, time::Duration};
+use std::{io::Read, process::ExitCode};
 
 const USAGE: &str = "Experimental BW XMLA probe (not AO/BICS parity)\n\n  gridcraft-bw discover [--rowset MDSCHEMA_CUBES] [--catalog ID] [--cube ID]\n  gridcraft-bw execute --catalog ID --mdx-file query.mdx\n  gridcraft-bw parse --response-file response.xml\n\nDiscover/execute print a SOAP request without contacting a server. Add --send to call\nGRIDCRAFT_BW_XMLA_URL over HTTPS, with GRIDCRAFT_BW_USER and GRIDCRAFT_BW_PASSWORD\nread only from the process environment. No redirects, credential storage or TLS bypass.\nOutput is a JSON rowset; it is not imported into a workbook. Keep real output private.";
 
@@ -66,42 +67,14 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let endpoint = std::env::var("GRIDCRAFT_BW_XMLA_URL").map_err(|_| "Set GRIDCRAFT_BW_XMLA_URL locally.")?;
-    let url = reqwest::Url::parse(&endpoint).map_err(|_| "Invalid XMLA URL.")?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err("Use an HTTPS XMLA endpoint without embedded credentials, query parameters or fragments.".into());
-    }
-    let user = std::env::var("GRIDCRAFT_BW_USER").map_err(|_| "Set GRIDCRAFT_BW_USER locally.")?;
-    let password = std::env::var("GRIDCRAFT_BW_PASSWORD")
-        .map_err(|_| "Set GRIDCRAFT_BW_PASSWORD locally; never put credentials in command arguments or chat.")?;
-    let client = reqwest::blocking::Client::builder()
-        .https_only(true)
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|_| "Cannot initialize HTTPS client.")?;
-    let response = client
-        .post(url)
-        .basic_auth(user, Some(password))
-        .header("Content-Type", "text/xml; charset=utf-8")
-        .header("SOAPAction", format!("\"urn:schemas-microsoft-com:xml-analysis:{action}\""))
-        .body(body)
-        .send()
-        .map_err(|_| "XMLA request failed (network, TLS or timeout). No results were imported.")?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "XMLA returned HTTP {}. Check endpoint, authorization and server configuration. No results were imported.",
-            response.status().as_u16()
-        ));
-    }
-    let mut bytes = Vec::new();
-    response.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|_| "Cannot read XMLA response.")?;
+    let response = gridcraft_bw_client::Client::default().start(Request {
+        endpoint,
+        action,
+        body,
+        simulator: false,
+        canceled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    })?;
+    let bytes = response.recv().map_err(|_| "BW transport worker stopped.")??;
     let result = parse_rowset(&bytes)?;
     println!("{}", serde_json::to_string_pretty(&result).map_err(|_| "Cannot encode rowset.")?);
     Ok(())

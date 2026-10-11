@@ -10,15 +10,15 @@ use gridcraft_model::{
 };
 
 const PART: &str = "xl/gridcraft/analysis.json";
-const MAX_DEFINITION: u64 = 16 * 1024;
+const MAX_DEFINITION: u64 = 128 * 1024;
 
 pub fn write(wb: &Workbook, out: &mut Out, rels: &mut Rels) -> Result<(), IoError> {
     let Some(b) = &wb.analysis else {
         return Ok(());
     };
     let definition = SavedAnalysis {
-        schema_version: 1,
-        provider: "fixture".into(),
+        schema_version: if b.definition.bw.is_some() { 2 } else { 1 },
+        provider: if b.definition.bw.is_some() { "bwXmla" } else { "fixture" }.into(),
         definition: b.definition.clone(),
         data_sheet: b.data_sheet.clone(),
         report_sheet: b.report_sheet.clone(),
@@ -42,7 +42,13 @@ pub fn read(cx: &mut Ctx<'_>, wb: &mut Workbook) -> Result<(), IoError> {
         return Ok(());
     };
     let saved = match serde_json::from_slice::<SavedAnalysis>(&data) {
-        Ok(saved) if saved.schema_version == 1 && saved.provider == "fixture" && saved.source_rows <= 10_000 => saved,
+        Ok(saved)
+            if ((saved.schema_version == 1 && saved.provider == "fixture" && saved.definition.bw.is_none())
+                || (saved.schema_version == 2 && saved.provider == "bwXmla" && saved.definition.bw.is_some()))
+                && saved.source_rows <= 10_000 =>
+        {
+            saved
+        }
         _ => {
             cx.warn("Unsupported or invalid GridCraft analysis definition; cells were preserved without a refresh binding.");
             return Ok(());

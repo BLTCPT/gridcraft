@@ -15,6 +15,25 @@ pub struct AnalysisQuery {
     pub rows: String,
     pub columns: String,
     pub measure: String,
+    /// Present only for the optional read-only XMLA transport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bw: Option<BwQuery>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BwQuery {
+    pub endpoint: String,
+    pub catalog: String,
+    pub mdx: String,
+    /// Explicit single-member MDX placeholders; not BW/BICS variable discovery.
+    #[serde(default)]
+    pub variables: std::collections::BTreeMap<String, String>,
+    /// Unit/currency field must contain at most one non-empty value per result.
+    #[serde(default)]
+    pub unit_field: Option<String>,
+    #[serde(default)]
+    pub simulator: bool,
 }
 
 /// Kept in the COW workbook so refresh, layout changes and undo are atomic. No credentials.

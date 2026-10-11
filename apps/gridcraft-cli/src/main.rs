@@ -159,12 +159,14 @@ fn exec(s: &mut Session, id: &str, params: Value) -> Result<Value, String> {
 
 fn open(path: &str) -> Result<Session, String> {
     let mut s = Session::new();
+    gridcraft_bw_client::install(&mut s);
     exec(&mut s, "file.open", json!({"path": path}))?;
     Ok(s)
 }
 
 fn blank() -> Session {
     let mut s = Session::new();
+    gridcraft_bw_client::install(&mut s);
     s.new_workbook();
     s
 }
@@ -383,6 +385,7 @@ fn run(args: &[String]) -> Result<(), String> {
         (Some(p), None) => open(p)?,
         (None, Some(name)) => {
             let mut s = Session::new();
+            gridcraft_bw_client::install(&mut s);
             exec(&mut s, "file.new", json!({"sample": name}))?;
             s
         }
@@ -469,6 +472,7 @@ fn functions(args: &[String]) -> Result<(), String> {
         p["category"] = json!(c);
     }
     let mut s = Session::new();
+    gridcraft_bw_client::install(&mut s);
     let v = exec(&mut s, "formulas.functions", p)?;
     if a.has("json") {
         outln!("{}", pretty(&v));
@@ -505,6 +509,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
                 (Some(p), _) => open(p)?,
                 (None, Some(name)) => {
                     let mut s = Session::new();
+                    gridcraft_bw_client::install(&mut s);
                     exec(&mut s, "file.new", json!({"sample": name}))?;
                     s
                 }

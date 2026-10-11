@@ -134,7 +134,7 @@ fn live_configuration_never_claims_connection_or_logs_credentials() {
         json!({"provider":"bwXmla","analyticalUrl":"https://bw.example/sap/bw/xml/soap/xmla","repositoryUrl":"https://bi.example/biprws"}),
     )
     .unwrap();
-    assert!(s.execute("analysis.connect", json!({})).unwrap_err().to_string().contains("No network request"));
+    assert!(s.execute("analysis.connect", json!({})).unwrap_err().to_string().contains("no XMLA transport"));
     assert!(!s.doc().unwrap().analysis_session.connected);
     assert!(!serde_json::to_string(&s.journal).unwrap().contains("analyticalUrl"));
     assert!(!serde_json::to_string(&s.doc().unwrap().wb).unwrap().contains("bw.example"));

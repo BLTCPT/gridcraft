@@ -38,10 +38,12 @@ pub const TABLE: &[(&str, Class)] = &[
     ("engine", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
+    ("bw-client", Class::Layer(6)),
     // L7 apps (exempt) and tooling (unchecked)
     ("gridcraft", Class::Layer(7)),
     ("cli", Class::Layer(7)),
     ("bw", Class::Layer(7)),
+    ("bw-sim", Class::Layer(7)),
     ("web", Class::Layer(7)),
     ("xtask", Class::Exempt),
 ];

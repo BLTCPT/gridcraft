@@ -1,0 +1,48 @@
+name: Analysis Windows
+on:
+  push:
+    branches: [feature/analysis-workspace]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: analysis-windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown, x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: analysis-windows-x64
+      - name: All quality gates and network end-to-end tests
+        shell: pwsh
+        run: |
+          cargo xtask ci 2>&1 | Tee-Object -FilePath windows-ci.log
+          if ($LASTEXITCODE -ne 0) { throw 'Quality gates failed' }
+      - name: Build portable executables and process-level smoke test
+        shell: pwsh
+        run: ./packaging/windows/analysis-portable.ps1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gridcraft-analysis-windows-x64-${{ github.sha }}
+          path: dist/analysis/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve validation log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-validation-${{ github.sha }}
+          path: windows-ci.log
+          retention-days: 14

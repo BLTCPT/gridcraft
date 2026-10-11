@@ -11,11 +11,15 @@ use crate::analysis::{AnalysisSession, AnalyticalProvider, ConnectionConfig, Fix
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
+        cmd!("analysis.poll", "Complete BW request", [], None, "{}; apply a completed transport response atomically", has_doc, poll),
+        cmd!(query "analysis.cancel", "Cancel BW request", ["Analysis", "Connection"], None, "{}; discard in-flight result", has_doc, cancel),
+        cmd!(query "analysis.discover", "Discover BW metadata", ["Analysis", "Data Source"], None, "{rowset, catalog?, cube?}", has_doc, discover_live),
+        cmd!(query "analysis.bwVariables", "Apply MDX members", ["Analysis", "Data"], None, "{variables: {NAME: memberUniqueName}}; explicit MDX placeholders only", has_doc, bw_variables),
         cmd!(query "analysis.xmla.discoverRequest", "Build BW XMLA Discovery", [], None, "{rowset, catalog?, cube?} → SOAP request only; no network", always, xmla_discover),
         cmd!(query "analysis.xmla.executeRequest", "Build BW XMLA Query", [], None, "{catalog, mdx} → read-only SOAP request only; no network", always, xmla_execute),
         cmd!(query "analysis.xmla.parse", "Read BW XMLA Rowset", [], None, "{xml} → bounded tabular rowset; does not import into a workbook", always, xmla_parse),
         cmd!(query "analysis.configure", "Configure Analytics", ["Analysis", "Connection"], None, "{provider: fixture|bwXmla|bwRfc|hanaIna, analyticalUrl?, repositoryUrl?}; no credentials", has_doc, configure),
-        cmd!(query "analysis.connect", "Connect", ["Analysis", "Connection"], None, "{}; only the synthetic provider is available", has_doc, connect),
+        cmd!(query "analysis.connect", "Connect", ["Analysis", "Connection"], None, "{}; discover catalogs through the configured host transport", has_doc, connect),
         cmd!(query "analysis.disconnect", "Disconnect", ["Analysis", "Connection"], None, "{}", has_doc, disconnect),
         cmd!(query "analysis.status", "Analysis Status", [], None, "{} → configuration, connection and report state (no secrets)", has_doc, status),
         cmd!(query "analysis.queries", "Query Catalog", ["Analysis", "Data Source"], None, "{} → synthetic query catalog", has_doc, queries),
@@ -73,11 +77,21 @@ fn failure(message: impl Into<String>) -> EngineError {
 fn configure(s: &mut Session, p: &Json) -> Result<Json> {
     let config: ConnectionConfig = strict(p, "analysis.configure")?;
     config.validate().map_err(failure)?;
-    s.doc_mut()?.analysis_session = AnalysisSession { config, connected: false };
+    cancel(s, &json!({}))?;
+    s.doc_mut()?.analysis_session = AnalysisSession { config, ..Default::default() };
     status(s, &json!({}))
 }
 fn connect(s: &mut Session, p: &Json) -> Result<Json> {
     no_params(p, "analysis.connect")?;
+    let kind = s.doc()?.analysis_session.config.provider;
+    if matches!(kind, ProviderKind::BwXmla | ProviderKind::BwSimulator) {
+        return start(
+            s,
+            crate::analysis::network::Operation::Connect,
+            "Discover",
+            crate::analysis::xmla::discover("DBSCHEMA_CATALOGS", None, None).map_err(failure)?,
+        );
+    }
     let state = &mut s.doc_mut()?.analysis_session;
     state.config.validate().map_err(failure)?;
     if state.config.provider != ProviderKind::Fixture {
@@ -88,6 +102,7 @@ fn connect(s: &mut Session, p: &Json) -> Result<Json> {
 }
 fn disconnect(s: &mut Session, p: &Json) -> Result<Json> {
     no_params(p, "analysis.disconnect")?;
+    cancel(s, &json!({}))?;
     s.doc_mut()?.analysis_session.connected = false;
     status(s, &json!({}))
 }
@@ -95,7 +110,9 @@ fn status(s: &mut Session, p: &Json) -> Result<Json> {
     no_params(p, "analysis.status")?;
     let d = s.doc()?;
     Ok(json!({"config": d.analysis_session.config, "connected": d.analysis_session.connected,
-        "live": false, "synthetic": d.analysis_session.config.provider == ProviderKind::Fixture,
+        "live": d.analysis_session.connected && d.analysis_session.config.provider == ProviderKind::BwXmla,
+        "pending": d.analysis_session.pending.is_some(), "catalog": d.analysis_session.catalog,
+        "synthetic": matches!(d.analysis_session.config.provider, ProviderKind::Fixture | ProviderKind::BwSimulator),
         "report": d.wb.analysis.as_ref().map(|b| json!({"definition": b.definition,
             "dataSheet": b.data_sheet, "reportSheet": b.report_sheet, "refreshCount": b.refresh_count, "sourceRows": b.source_rows})),
         "persistence": "XLSX stores the GridCraft analysis definition and values. Reconnect explicitly after reopening. SAP AO metadata is unsupported."}))
@@ -142,6 +159,9 @@ fn variables(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let args: Params = strict(p, "analysis.variables")?;
     let mut q = current(s)?;
+    if q.bw.is_some() {
+        return Err(failure("Use analysis.bwVariables for explicit MDX member placeholders. These are not BW variable processing."));
+    }
     q.fiscal_year = args.fiscal_year;
     q.region = args.region;
     render(s, q, true)
@@ -182,7 +202,21 @@ fn unedited(actual: &Sheet, expected: &Sheet) -> bool {
 }
 
 fn render(s: &mut Session, definition: AnalysisQuery, refreshing: bool) -> Result<Json> {
+    if definition.bw.is_some() {
+        return start_query(s, definition, refreshing);
+    }
     let rows = s.doc()?.analysis_session.fixture().map_err(failure)?.execute(&definition).map_err(failure)?;
+    render_rows(s, definition, refreshing, rows, None)
+}
+
+fn render_rows(s: &mut Session, definition: AnalysisQuery, refreshing: bool, rows: Vec<Vec<Value>>, unit: Option<String>) -> Result<Json> {
+    let bw = definition.bw.clone();
+    let synthetic = bw.as_ref().is_none_or(|b| b.simulator);
+    let headers: Vec<String> = if bw.is_some() {
+        vec![definition.rows.clone(), definition.columns.clone(), definition.measure.clone()]
+    } else {
+        ["Region", "Product", "Quarter", "Revenue", "Units"].map(str::to_string).to_vec()
+    };
     edit(s, |cx| {
         if cx.wb.protected_structure {
             return Err(failure("Unprotect the workbook structure before changing its analysis."));
@@ -210,18 +244,27 @@ fn render(s: &mut Session, definition: AnalysisQuery, refreshing: bool) -> Resul
             sheet.merges.push(gridcraft_core::RangeRef::new(CellRef::new(0, 0), CellRef::new(0, 6)));
             sheet.merges.push(gridcraft_core::RangeRef::new(CellRef::new(1, 0), CellRef::new(1, 6)));
         }
-        data.set_value(CellRef::new(0, 0), Value::text("SYNTHETIC DEMO | Original fixture data"));
-        report.set_value(CellRef::new(0, 0), Value::text("SYNTHETIC DEMO | Sales analysis"));
-        let subtitle = format!(
-            "FY {} | {} | {} | Refresh {} | USD revenue",
-            definition.fiscal_year,
-            definition.region.as_deref().unwrap_or("All regions"),
-            definition.measure,
-            generation
-        );
+        let label = if let Some(b) = &bw {
+            if b.simulator { "LOCAL XMLA SIMULATOR | Synthetic" } else { "BW XMLA | Experimental read-only" }
+        } else {
+            "SYNTHETIC DEMO | Original fixture data"
+        };
+        data.set_value(CellRef::new(0, 0), Value::text(label));
+        report.set_value(CellRef::new(0, 0), Value::text(label));
+        let subtitle = if bw.is_some() {
+            format!("{} | {} | Refresh {} | {}", definition.query, definition.measure, generation, unit.as_deref().unwrap_or("Unit unspecified"))
+        } else {
+            format!(
+                "FY {} | {} | {} | Refresh {} | USD revenue",
+                definition.fiscal_year,
+                definition.region.as_deref().unwrap_or("All regions"),
+                definition.measure,
+                generation
+            )
+        };
         report.set_value(CellRef::new(1, 0), Value::text(subtitle));
-        for (ci, header) in ["Region", "Product", "Quarter", "Revenue", "Units"].iter().enumerate() {
-            data.set_value(CellRef::new(3, ci as u32), Value::text(*header));
+        for (ci, header) in headers.iter().enumerate() {
+            data.set_value(CellRef::new(3, ci as u32), Value::text(header.clone()));
         }
         for (ri, row) in rows.iter().enumerate() {
             for (ci, value) in row.iter().enumerate() {
@@ -254,14 +297,14 @@ fn render(s: &mut Session, definition: AnalysisQuery, refreshing: bool) -> Resul
         report.pivots.push(PivotTable {
             id: pivot_id,
             name: pivot_name,
-            source: format!("{}!A4:E{}", gridcraft_formula::quote_sheet(&data_name), rows.len() + 4),
+            source: format!("{}!A4:{}{}", gridcraft_formula::quote_sheet(&data_name), if bw.is_some() { "C" } else { "E" }, rows.len() + 4),
             anchor: CellRef::new(4, 0),
             rows: vec![PivotField { source_col: definition.rows.clone(), ..Default::default() }],
             columns: vec![PivotField { source_col: definition.columns.clone(), ..Default::default() }],
             values: vec![PivotValue {
                 source_col: definition.measure.clone(),
                 name: definition.measure.clone(),
-                number_format: Some(if definition.measure == "Revenue" { "\"$\"#,##0.00" } else { "#,##0" }.into()),
+                number_format: Some(if bw.is_none() && definition.measure == "Revenue" { "\"$\"#,##0.00" } else { "#,##0" }.into()),
                 ..Default::default()
             }],
             layout: PivotLayout::Tabular,
@@ -289,7 +332,7 @@ fn render(s: &mut Session, definition: AnalysisQuery, refreshing: bool) -> Resul
         cx.wb.active_sheet = report_idx;
         *cx.sel = crate::Selection::at(CellRef::new(4, 0));
         cx.structural = true;
-        Ok(json!({"synthetic": true, "live": false, "dataSheet": data_name, "reportSheet": report_name,
+        Ok(json!({"synthetic": synthetic, "live": !synthetic, "dataSheet": data_name, "reportSheet": report_name,
             "range": area.a1(), "sourceRows": rows.len(), "refreshCount": generation}))
     })
 }
@@ -325,4 +368,103 @@ fn xmla_parse(_: &mut Session, p: &Json) -> Result<Json> {
     }
     let p: Params = strict(p, "analysis.xmla.parse")?;
     Ok(json!(crate::analysis::xmla::parse_rowset(p.xml.as_bytes()).map_err(failure)?))
+}
+
+fn cancel(s: &mut Session, p: &Json) -> Result<Json> {
+    no_params(p, "analysis.cancel")?;
+    if let Some(p) = s.doc_mut()?.analysis_session.pending.take() {
+        p.cancel();
+    }
+    Ok(json!({"canceled": true, "pending": false}))
+}
+fn start(s: &mut Session, operation: crate::analysis::network::Operation, action: &'static str, body: String) -> Result<Json> {
+    use crate::analysis::network::{Pending, Request};
+    let d = s.doc()?;
+    d.analysis_session.config.validate().map_err(failure)?;
+    if d.analysis_session.pending.is_some() {
+        return Err(failure("A BW request is pending. Wait or cancel it first."));
+    }
+    let transport = s.analysis_transport.as_ref().ok_or_else(|| failure("This host has no XMLA transport. Use the native desktop or CLI."))?;
+    let canceled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let receiver = transport
+        .start(Request {
+            endpoint: d.analysis_session.config.analytical_url.clone(),
+            action,
+            body,
+            simulator: d.analysis_session.config.provider == ProviderKind::BwSimulator,
+            canceled: canceled.clone(),
+        })
+        .map_err(failure)?;
+    let before = d.wb.clone();
+    s.doc_mut()?.analysis_session.pending = Some(Pending { receiver: Arc::new(std::sync::Mutex::new(receiver)), canceled, before, operation });
+    Ok(json!({"pending": true}))
+}
+fn start_query(s: &mut Session, definition: AnalysisQuery, refreshing: bool) -> Result<Json> {
+    let b = definition.bw.as_ref().ok_or_else(|| failure("Missing XMLA definition."))?;
+    let state = &s.doc()?.analysis_session;
+    if !state.connected
+        || !matches!(state.config.provider, ProviderKind::BwXmla | ProviderKind::BwSimulator)
+        || b.endpoint != state.config.analytical_url
+        || b.simulator != (state.config.provider == ProviderKind::BwSimulator)
+    {
+        return Err(failure("Reconnect to the report's exact BW endpoint and provider before executing it."));
+    }
+    let body = crate::analysis::network::statement(&definition).map_err(failure)?;
+    start(s, crate::analysis::network::Operation::Execute { definition: Box::new(definition), refreshing }, "Execute", body)
+}
+fn poll(s: &mut Session, p: &Json) -> Result<Json> {
+    use crate::analysis::network::Operation;
+    no_params(p, "analysis.poll")?;
+    let Some(pending) = s.doc()?.analysis_session.pending.clone() else {
+        return Ok(json!({"pending": false}));
+    };
+    let response = pending.receiver.lock().map_err(|_| failure("BW response channel failed."))?.try_recv();
+    let response = match response {
+        Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(json!({"pending":true})),
+        Err(_) => Err("BW transport stopped before returning a response.".into()),
+        Ok(r) => r,
+    };
+    s.doc_mut()?.analysis_session.pending = None;
+    if !Arc::ptr_eq(&pending.before, &s.doc()?.wb) {
+        return Err(failure("Workbook changed while BW was running. Response discarded; refresh again."));
+    }
+    let rows = crate::analysis::xmla::parse_rowset(&response.map_err(failure)?).map_err(failure)?;
+    match pending.operation {
+        Operation::Connect => {
+            if rows.rows.is_empty() {
+                return Err(failure("XMLA discovery returned no accessible catalogs."));
+            }
+            s.doc_mut()?.analysis_session.connected = true;
+            s.doc_mut()?.analysis_session.catalog = json!(rows);
+            status(s, &json!({}))
+        }
+        Operation::Discover => {
+            let value = json!(rows);
+            s.doc_mut()?.analysis_session.catalog = value.clone();
+            Ok(value)
+        }
+        Operation::Execute { definition, refreshing } => {
+            let (rows, unit) = crate::analysis::network::typed_rows(&definition, rows).map_err(failure)?;
+            render_rows(s, *definition, refreshing, rows, unit)
+        }
+    }
+}
+fn discover_live(s: &mut Session, p: &Json) -> Result<Json> {
+    if !s.doc()?.analysis_session.connected || !matches!(s.doc()?.analysis_session.config.provider, ProviderKind::BwXmla | ProviderKind::BwSimulator)
+    {
+        return Err(failure("Connect to BW XMLA or the local simulator first."));
+    }
+    let body = xmla_discover(s, p)?.get("xml").and_then(Json::as_str).ok_or_else(|| failure("Missing discovery request."))?.to_string();
+    start(s, crate::analysis::network::Operation::Discover, "Discover", body)
+}
+fn bw_variables(s: &mut Session, p: &Json) -> Result<Json> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Params {
+        variables: std::collections::BTreeMap<String, String>,
+    }
+    let args: Params = strict(p, "analysis.bwVariables")?;
+    let mut definition = current(s)?;
+    definition.bw.as_mut().ok_or_else(|| failure("This report is not an XMLA query."))?.variables = args.variables;
+    render(s, definition, true)
 }

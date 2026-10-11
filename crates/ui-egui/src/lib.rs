@@ -241,7 +241,9 @@ impl SheetApp {
         }
         let r = self.session.run(id, params);
         self.after_engine();
-        if r.is_ok() && (id.starts_with("analysis.") || matches!(id, "edit.undo" | "edit.redo")) {
+        if r.as_ref().is_ok_and(|v| v.get("pending").and_then(Json::as_bool) != Some(true))
+            && (id.starts_with("analysis.") || matches!(id, "edit.undo" | "edit.redo"))
+        {
             analysis_pane::sync_applied(self);
         }
         if id == "file.exportPdf"
@@ -574,6 +576,12 @@ impl SheetApp {
         }
         self.effective_dark = ctx.theme() == egui::Theme::Dark;
         control::poll(self, ctx);
+        if self.session.active().is_some_and(|d| d.analysis_session.pending.is_some()) {
+            if let Err(e) = self.run("analysis.poll", serde_json::json!({})) {
+                self.message = Some(("BW XMLA".into(), e));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
             .services

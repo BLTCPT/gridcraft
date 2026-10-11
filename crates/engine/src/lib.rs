@@ -183,6 +183,8 @@ pub enum UiRequest {
 
 #[derive(Default)]
 pub struct Session {
+    /// Host-injected native transport. The engine remains network/runtime independent.
+    pub analysis_transport: Option<std::sync::Arc<dyn analysis::network::Transport>>,
     docs: Vec<DocState>,
     active: usize,
     pub clipboard: Option<Clipboard>,
@@ -320,7 +322,13 @@ impl Session {
     /// queued a file dialog because it got no file (`file.open`, `file.saveAs`, `file.save` on a workbook with no
     /// file yet, `data.getData`) is an error instead of a silent success.
     pub fn execute_headless(&mut self, id: &str, params: Json) -> Result<Json> {
-        let r = self.execute(id, params);
+        #[allow(unused_mut)] // native hosts await their worker; WASM has no transport installed
+        let mut r = self.execute(id, params);
+        #[cfg(not(target_arch = "wasm32"))]
+        while r.as_ref().is_ok_and(|v| v.get("pending").and_then(Json::as_bool) == Some(true)) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            r = self.execute("analysis.poll", serde_json::json!({}));
+        }
         let requests = self.take_ui_requests();
         let asked_for_file = requests.iter().any(|q| matches!(q, UiRequest::Dialog(name, _) if name == "open" || name == "saveAs"));
         if r.is_ok() && asked_for_file {

@@ -1,0 +1,19 @@
+[package]
+name = "gridcraft-bw-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Synthetic local XMLA protocol simulator; not an SAP runtime"
+[lints]
+workspace = true
+[dependencies]
+quick-xml.workspace = true
+gridcraft-engine.workspace = true
+[dev-dependencies]
+gridcraft-bw-client.workspace = true
+gridcraft-core.workspace = true
+serde_json.workspace = true
+gridcraft-mcp.workspace = true
+gridcraft-ui-egui.workspace = true
+egui.workspace = true
+egui_kittest.workspace = true

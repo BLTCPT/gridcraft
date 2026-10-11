@@ -232,6 +232,7 @@ fn main() -> eframe::Result<()> {
         }
     }
     let mut session = Session::new();
+    gridcraft_bw_client::install(&mut session);
     if let Some(s) = &sample
         && let Err(e) = session.execute("file.new", json!({"sample": s}))
     {

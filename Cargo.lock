@@ -1509,6 +1509,7 @@ dependencies = [
  "eframe",
  "egui",
  "fmv-macos-events",
+ "gridcraft-bw-client",
  "gridcraft-engine",
  "gridcraft-ui-egui",
  "image",
@@ -1523,8 +1524,31 @@ dependencies = [
 name = "gridcraft-bw"
 version = "0.5.0"
 dependencies = [
+ "gridcraft-bw-client",
+ "gridcraft-engine",
+ "serde_json",
+]
+
+[[package]]
+name = "gridcraft-bw-client"
+version = "0.5.0"
+dependencies = [
  "gridcraft-engine",
  "reqwest",
+]
+
+[[package]]
+name = "gridcraft-bw-sim"
+version = "0.5.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "gridcraft-bw-client",
+ "gridcraft-core",
+ "gridcraft-engine",
+ "gridcraft-mcp",
+ "gridcraft-ui-egui",
+ "quick-xml 0.38.4",
  "serde_json",
 ]
 
@@ -1555,6 +1579,7 @@ dependencies = [
 name = "gridcraft-cli"
 version = "0.5.0"
 dependencies = [
+ "gridcraft-bw-client",
  "gridcraft-engine",
  "gridcraft-mcp",
  "log",

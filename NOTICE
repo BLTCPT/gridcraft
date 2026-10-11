@@ -12,8 +12,11 @@ Third-party material
 This product bundles third-party material under its own licenses, listed below. The per-file
 list (author, source, license) is in ATTRIBUTION.md.
 
-None: every bundled asset is original to GridCraft. Builds made with craft-fonts
-(CRAFT_FONTS_DIR) embed the fonts listed in ATTRIBUTION.md under the SIL Open Font License 1.1.
+Repository artwork is original to GridCraft. Compiled binaries also include third-party
+Rust dependencies and egui fallback fonts; see docs/dependency-license-inventory.tsv and
+docs/security-and-distribution-review.md. The prototype package does not yet assemble all
+third-party license texts; distribution review is incomplete. Optional craft-fonts builds
+(CRAFT_FONTS_DIR) additionally require their font licenses.
 
 Modified version: GridCraft Analysis workspace (experimental).
 Based on GridCraft by the ArtCraft team. This fork is independent and is not

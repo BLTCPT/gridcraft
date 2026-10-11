@@ -1,5 +1,6 @@
 //! Analytical-provider boundary. The demo provider is synthetic and performs no network I/O.
 //! BI-platform repository access and BW/HANA analytical execution are separate capabilities.
+pub mod network;
 pub mod xmla;
 
 use gridcraft_core::Value;
@@ -18,6 +19,7 @@ pub enum ProviderKind {
     #[default]
     Fixture,
     BwXmla,
+    BwSimulator,
     BwRfc,
     HanaIna,
 }
@@ -26,7 +28,8 @@ impl ProviderKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Fixture => "Synthetic demo",
-            Self::BwXmla => "SAP BW XMLA (not implemented)",
+            Self::BwXmla => "SAP BW XMLA (experimental)",
+            Self::BwSimulator => "Local XMLA simulator (synthetic)",
             Self::BwRfc => "SAP BW RFC/BICS (not implemented)",
             Self::HanaIna => "SAP HANA InA (not implemented)",
         }
@@ -48,6 +51,12 @@ impl ConnectionConfig {
     pub fn validate(&self) -> Result<(), String> {
         for value in [&self.analytical_url, &self.repository_url] {
             if value.is_empty() {
+                continue;
+            }
+            if self.provider == ProviderKind::BwSimulator && value == &self.analytical_url {
+                if !network::simulator_endpoint(value) {
+                    return Err("Simulator endpoint must be http://127.0.0.1:PORT/xmla.".into());
+                }
                 continue;
             }
             let authority = value.strip_prefix("https://").and_then(|x| x.split('/').next()).unwrap_or_default();
@@ -74,6 +83,8 @@ impl ConnectionConfig {
 pub struct AnalysisSession {
     pub config: ConnectionConfig,
     pub connected: bool,
+    pub catalog: Json,
+    pub pending: Option<network::Pending>,
 }
 
 /// Transport-independent query operations; a future provider must return typed values, not formulas.
@@ -115,6 +126,9 @@ impl AnalyticalProvider for FixtureProvider {
         }))
     }
     fn execute(&self, query: &AnalysisQuery) -> Result<Vec<Vec<Value>>, String> {
+        if query.bw.is_some() {
+            return Err("A BW report cannot be executed by the synthetic fixture provider.".into());
+        }
         self.metadata(&query.query)?;
         if ![2025, 2026].contains(&query.fiscal_year) {
             return Err("Fiscal year must be 2025 or 2026 for this synthetic query.".into());

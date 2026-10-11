@@ -75,10 +75,12 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 The [Analysis workspace](analysis-workspace.md) adds serializable query/binding types at L2,
 a GridCraft-owned XLSX metadata part at L2, provider/repository interfaces and XMLA codecs at
 L5, registered `analysis.*` commands at L5, and a thin Analysis ribbon/pane in L6 egui.
-Connection sessions are ephemeral engine document state. The optional L7 `gridcraft-bw` host
-uses engine codecs and owns native HTTPS transport; it does not replace the desktop app.
-The first interactive provider is synthetic. Live BW integration remains unverified.
+Connection sessions and pending requests are ephemeral engine document state. The L6
+`bw-client` injects a background transport into the L5 engine without upward dependencies.
+Desktop, CLI/MCP and the optional L7 diagnostic host share it. The L7 `gridcraft-bw-sim`
+serves synthetic loopback XMLA for network/UI/MCP end-to-end tests. Live BW remains unverified.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | BW2 | Native asynchronous XMLA transport, protocol simulator, E2E tests, Windows portable build |
 | 2026-10-11 | fork extension | Analysis model, commands, native pane, XLSX definition and XMLA diagnostic host; layering retained |

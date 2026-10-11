@@ -23,8 +23,16 @@ fn envelope(body: String) -> String {
 }
 /// Only standard read-only discovery rowsets, with explicit technical catalog/cube restrictions.
 pub fn discover(rowset: &str, catalog: Option<&str>, cube: Option<&str>) -> Result<String, String> {
-    if !["DISCOVER_DATASOURCES", "DBSCHEMA_CATALOGS", "MDSCHEMA_CUBES", "MDSCHEMA_DIMENSIONS", "MDSCHEMA_HIERARCHIES", "MDSCHEMA_MEASURES"]
-        .contains(&rowset)
+    if ![
+        "DISCOVER_DATASOURCES",
+        "DBSCHEMA_CATALOGS",
+        "MDSCHEMA_CUBES",
+        "MDSCHEMA_DIMENSIONS",
+        "MDSCHEMA_HIERARCHIES",
+        "MDSCHEMA_MEASURES",
+        "MDSCHEMA_SAP_VARIABLES",
+    ]
+    .contains(&rowset)
     {
         return Err("Unsupported discovery rowset.".into());
     }

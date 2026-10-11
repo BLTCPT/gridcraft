@@ -25,6 +25,8 @@ gridcraft-ui-egui = { path = "crates/ui-egui" }
 gridcraft-mcp = { path = "crates/mcp" }
 gridcraft-pdf = { path = "crates/pdf" }
 
+gridcraft-bw-client = { path = "crates/bw-client" }
+
 # foundation
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }

@@ -16,6 +16,10 @@ pub struct AnalysisDraft {
     pub rows: String,
     pub columns: String,
     pub measure: String,
+    pub catalog: String,
+    pub mdx: String,
+    pub member: String,
+    pub unit_field: String,
 }
 impl Default for AnalysisDraft {
     fn default() -> Self {
@@ -29,6 +33,12 @@ impl Default for AnalysisDraft {
             rows: "Region".into(),
             columns: "Product".into(),
             measure: "Revenue".into(),
+            catalog: "SYNTHETIC_BW".into(),
+            mdx:
+                "SELECT {[Measures].[Revenue]} ON COLUMNS, CrossJoin([Region].Members,[Product].Members) ON ROWS FROM [ZDEMO_SALES] WHERE ({{YEAR}})"
+                    .into(),
+            member: "[FiscalYear].[2026]".into(),
+            unit_field: "Currency".into(),
         }
     }
 }
@@ -53,7 +63,7 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut Ui) {
                 app.run_or_alert("analysis.swapAxes", json!({}));
             }
         });
-        ui.label("AO-style workflow · Synthetic demo available · BW server validation pending");
+        ui.label("AO-style workflow · Local simulator available · BW server validation pending");
         ui.small("BOBJ repository and BW query execution use separate interfaces.");
     });
 }
@@ -87,16 +97,41 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             app.analysis_draft.rows = b.definition.rows.clone();
             app.analysis_draft.columns = b.definition.columns.clone();
             app.analysis_draft.measure = b.definition.measure.clone();
+            if let Some(bw) = &b.definition.bw {
+                app.analysis_draft.catalog = bw.catalog.clone();
+                app.analysis_draft.mdx = bw.mdx.clone();
+                app.analysis_draft.member = bw.variables.get("YEAR").cloned().unwrap_or_default();
+                app.analysis_draft.unit_field = bw.unit_field.clone().unwrap_or_default();
+            }
         }
     }
     let connected = d.analysis_session.connected;
+    let pending = d.analysis_session.pending.is_some();
+    let provider = d.analysis_session.config.provider;
+    let metadata = d.analysis_session.catalog.clone();
     let report = d.wb.analysis.as_ref().map(|b| (b.definition.clone(), b.source_rows, b.refresh_count));
-    ui.colored_label(t.accent, egui::RichText::new(if connected { "SYNTHETIC SESSION" } else { "DISCONNECTED" }).strong());
-    ui.small("Original demo data only. No SAP server is connected.");
+    ui.colored_label(
+        t.accent,
+        egui::RichText::new(if pending {
+            "REQUEST RUNNING"
+        } else if !connected {
+            "DISCONNECTED"
+        } else if provider == ProviderKind::BwXmla {
+            "BW XMLA SESSION"
+        } else {
+            "SYNTHETIC SESSION"
+        })
+        .strong(),
+    );
+    ui.small(if provider == ProviderKind::BwXmla {
+        "Experimental XMLA subset; validate against your BW server."
+    } else {
+        "Original synthetic data. Not an SAP server."
+    });
     ui.add_space(8.0);
     ui.collapsing("Connection settings", |ui| {
         egui::ComboBox::from_id_salt("analysis-provider").selected_text(app.analysis_draft.provider.label()).show_ui(ui, |ui| {
-            for kind in [ProviderKind::Fixture, ProviderKind::BwXmla, ProviderKind::BwRfc] {
+            for kind in [ProviderKind::Fixture, ProviderKind::BwSimulator, ProviderKind::BwXmla, ProviderKind::BwRfc] {
                 ui.selectable_value(&mut app.analysis_draft.provider, kind, kind.label());
             }
         });
@@ -109,7 +144,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             );
             ui.label("BOBJ repository endpoint (optional)");
             ui.add(egui::TextEdit::singleline(&mut app.analysis_draft.repository_url).hint_text("https://bi.example/biprws").char_limit(2048));
-            ui.small("Configuration only. Live adapters are not connected to this pane. Do not enter passwords or tokens.");
+            ui.small("Live BW: approve the exact URL and credentials in the local launch environment. No credentials belong here. BOBJ repository access is separate and not implemented.");
         }
         if ui.button("Apply connection settings").clicked() {
             let config = ConnectionConfig {
@@ -129,13 +164,20 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         }
     });
     ui.horizontal(|ui| {
-        if ui.add_enabled(!connected, egui::Button::new("Connect")).clicked() {
+        if ui.add_enabled(!connected && !pending, egui::Button::new("Connect")).clicked() {
             app.run_or_alert("analysis.connect", json!({}));
         }
-        if ui.add_enabled(connected, egui::Button::new("Disconnect")).clicked() {
+        if ui.add_enabled(connected || pending, egui::Button::new("Disconnect")).clicked() {
             app.run_or_alert("analysis.disconnect", json!({}));
         }
     });
+    if pending && ui.button("Cancel request").clicked() {
+        app.run_or_alert("analysis.cancel", json!({}));
+    }
+    if provider != ProviderKind::Fixture {
+        show_bw(app, ui, connected, pending, report.is_some(), metadata);
+        return;
+    }
     ui.separator();
     ui.strong("Data source");
     ui.label("Sales by region and product");
@@ -205,12 +247,13 @@ pub fn sync_applied(app: &mut SheetApp) {
     let Some(d) = app.session.active() else {
         return;
     };
-    let mut draft = AnalysisDraft {
+    let mut draft = if app.analysis_draft.doc_uid == d.uid { app.analysis_draft.clone() } else { AnalysisDraft::default() };
+    draft = AnalysisDraft {
         doc_uid: d.uid,
         provider: d.analysis_session.config.provider,
         analytical_url: d.analysis_session.config.analytical_url.clone(),
         repository_url: d.analysis_session.config.repository_url.clone(),
-        ..Default::default()
+        ..draft
     };
     if let Some(b) = &d.wb.analysis {
         draft.fiscal_year = b.definition.fiscal_year;
@@ -218,6 +261,68 @@ pub fn sync_applied(app: &mut SheetApp) {
         draft.rows = b.definition.rows.clone();
         draft.columns = b.definition.columns.clone();
         draft.measure = b.definition.measure.clone();
+        if let Some(bw) = &b.definition.bw {
+            draft.catalog = bw.catalog.clone();
+            draft.mdx = bw.mdx.clone();
+            draft.member = bw.variables.get("YEAR").cloned().unwrap_or_default();
+            draft.unit_field = bw.unit_field.clone().unwrap_or_default();
+        }
     }
     app.analysis_draft = draft;
+}
+
+fn show_bw(app: &mut SheetApp, ui: &mut Ui, connected: bool, pending: bool, has_report: bool, metadata: serde_json::Value) {
+    ui.separator();
+    ui.strong("BW XMLA · read-only");
+    ui.small("Start gridcraft-bw-sim, select Local XMLA simulator, and set http://127.0.0.1:8787/xmla to test without SAP.");
+    ui.label("Technical catalog");
+    ui.add(egui::TextEdit::singleline(&mut app.analysis_draft.catalog).char_limit(256));
+    ui.horizontal(|ui| {
+        if ui.add_enabled(connected && !pending, egui::Button::new("Discover cubes")).clicked() {
+            app.run_or_alert("analysis.discover", json!({"rowset":"MDSCHEMA_CUBES", "catalog":app.analysis_draft.catalog}));
+        }
+        if ui.add_enabled(connected && !pending, egui::Button::new("Discover variables")).clicked() {
+            app.run_or_alert("analysis.discover", json!({"rowset":"MDSCHEMA_SAP_VARIABLES", "catalog":app.analysis_draft.catalog}));
+        }
+    });
+    ui.collapsing("Last discovery response", |ui| {
+        egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
+            ui.small(serde_json::to_string_pretty(&metadata).unwrap_or_default());
+        });
+    });
+    ui.label("Approved MDX SELECT (tabular result)");
+    ui.add(egui::TextEdit::multiline(&mut app.analysis_draft.mdx).desired_rows(4).char_limit(32_768));
+    ui.label("YEAR member placeholder (optional)");
+    ui.add(egui::TextEdit::singleline(&mut app.analysis_draft.member).char_limit(256));
+    ui.small("Substitutes {{YEAR}} with a single member unique name. This does not clear or process BW variables/defaults/exits.");
+    for (label, value) in [
+        ("Row field", &mut app.analysis_draft.rows),
+        ("Column field", &mut app.analysis_draft.columns),
+        ("Numeric measure field", &mut app.analysis_draft.measure),
+        ("Unit/currency field (optional)", &mut app.analysis_draft.unit_field),
+    ] {
+        ui.label(label);
+        ui.add(egui::TextEdit::singleline(value).char_limit(256));
+    }
+    ui.small("Use technical rowset fields and additive leaf results only. Mixed units and duplicate tuples are rejected. Hierarchical axes and exception aggregation are unsupported.");
+    if !has_report && ui.add_enabled(connected && !pending, egui::Button::new("Execute & insert BW report")).clicked() {
+        let d = &app.analysis_draft;
+        let variables = if d.member.is_empty() { json!({}) } else { json!({"YEAR": d.member}) };
+        let params = json!({"query": "XMLA SELECT", "fiscalYear": 0, "rows":d.rows,"columns":d.columns,"measure":d.measure,
+            "bw":{"endpoint":d.analytical_url,"catalog":d.catalog,"mdx":d.mdx,"variables":variables,
+                "unitField":(!d.unit_field.is_empty()).then_some(&d.unit_field),"simulator":d.provider == ProviderKind::BwSimulator}});
+        app.run_or_alert("analysis.insert", params);
+    }
+    if has_report {
+        if ui.add_enabled(connected && !pending, egui::Button::new("Apply YEAR member & refresh")).clicked() {
+            app.run_or_alert("analysis.bwVariables", json!({"variables":{"YEAR":app.analysis_draft.member}}));
+        }
+        if ui.add_enabled(connected && !pending, egui::Button::new("Apply field layout & refresh")).clicked() {
+            app.run_or_alert(
+                "analysis.layout",
+                json!({"rows":app.analysis_draft.rows,"columns":app.analysis_draft.columns,"measure":app.analysis_draft.measure}),
+            );
+        }
+        ui.small("Refresh uses the saved query and exact endpoint. Reconnect explicitly after reopening an XLSX. Edit a new workbook to change the MDX/catalog.");
+    }
 }
