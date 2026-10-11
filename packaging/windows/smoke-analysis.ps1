@@ -44,3 +44,7 @@ try {
   foreach ($Process in $Processes) { Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue }
   Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 }
+# Expected negative cases leave the last native process at exit 1. Reach this only
+# after every assertion succeeds; an exception above still fails the invoking host.
+$global:LASTEXITCODE = 0
+Write-Output 'PASS: all Windows process smoke assertions completed'

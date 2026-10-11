@@ -114,6 +114,9 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str, extra: &str) ->
     .map_err(|_| "Simulator connection ended.".into())
 }
 fn serve(mut stream: TcpStream, scenario: u8, count: &AtomicUsize) -> Result<(), String> {
+    // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+    // Each bounded worker must wait for request bytes instead of racing the client.
+    stream.set_nonblocking(false).map_err(|_| "Socket setup failed.")?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(|_| "Socket setup failed.")?;
     stream.set_write_timeout(Some(Duration::from_secs(2))).map_err(|_| "Socket setup failed.")?;
     let mut bytes = Vec::new();
@@ -318,4 +321,25 @@ fn parse_request(bytes: &[u8]) -> Result<(String, String, String, String), Strin
         return Err("Not a supported SOAP/XMLA request.".into());
     }
     Ok((action, rowset, statement, catalog))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepted_nonblocking_socket_waits_for_request_bytes() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        server.set_nonblocking(true).unwrap();
+        let worker = thread::spawn(move || serve(server, Scenario::Normal as u8, &AtomicUsize::new(0)));
+        thread::sleep(Duration::from_millis(50));
+        client.write_all(b"POST /xmla HTTP/1.1\r\nHost: synthetic\r\nContent-Length: 0\r\n\r\n").unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 401 Fixture\r\n"));
+        assert!(worker.join().unwrap().is_ok());
+    }
 }

@@ -38,6 +38,7 @@ try {
   & (Join-Path $Stage 'smoke-analysis.ps1') -Bin $Stage
   $Demo = Start-Process (Join-Path $Stage 'gridcraft.exe') -ArgumentList '--bw-demo-check' -Wait -PassThru
   if ($Demo.ExitCode -ne 0) { throw 'Native demo bootstrap failed' }
+  Write-Output 'PASS: native Windows demo bootstrap exited 0'
   $Dist = Join-Path $Root 'dist\analysis'
   New-Item -ItemType Directory -Force $Dist | Out-Null
   $Zip = Join-Path $Dist 'gridcraft-analysis-windows-x64-portable.zip'
@@ -45,4 +46,5 @@ try {
   $Hash = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
   "$Hash  gridcraft-analysis-windows-x64-portable.zip" | Set-Content "$Zip.sha256"
   Copy-Item (Join-Path $Stage 'BUILD.txt') $Dist
+  Write-Output "PASS: portable package complete, SHA256 $Hash"
 } finally { Pop-Location }
