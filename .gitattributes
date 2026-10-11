@@ -1,0 +1,6 @@
+# Stable bytes for checked/generated inputs on Windows and Unix.
+/Cargo.lock text eol=lf
+/docs/parity-checklist.md text eol=lf
+# Upstream license hashes refer to exact original bytes: never normalize these.
+/legal/supplemental/** -text
+/packaging/windows/*.cmd text eol=crlf

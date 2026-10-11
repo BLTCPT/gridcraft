@@ -13,8 +13,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      CARGO_TERM_COLOR: always
+      CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: 0
+      # CI does not ship test PDBs. Avoid their linking/storage cost on clean Windows runners.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
@@ -25,6 +28,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: analysis-windows-x64
+          cache-on-failure: true
       - name: All quality gates and network end-to-end tests
         shell: pwsh
         run: |

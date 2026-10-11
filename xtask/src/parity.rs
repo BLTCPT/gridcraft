@@ -23,6 +23,11 @@ fn pct(done: usize, total: usize) -> f64 {
     if total == 0 { 0.0 } else { 100.0 * done as f64 / total as f64 }
 }
 
+// Git/editor newline conversion is not a catalog change. Keep all other content significant.
+fn is_current(current: &str, rendered: &str) -> bool {
+    current.replace("\r\n", "\n") == rendered
+}
+
 /// The markdown for docs/parity-checklist.md. Ids are counted once (the first catalog row wins), tabs keep
 /// catalog order.
 pub fn render(entries: &[Entry]) -> String {
@@ -106,7 +111,7 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     let text = render(&entries());
     if check {
         let current = std::fs::read_to_string(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-        if current != text {
+        if !is_current(&current, &text) {
             return Err(format!("{} is out of date; run `cargo xtask parity`", out.display()));
         }
         println!("{} ({} up to date)", summary_line(), out.display());
@@ -148,5 +153,14 @@ mod tests {
     #[test]
     fn empty_catalog_renders() {
         assert!(render(&[]).contains("0 / 0 commands implemented (0.0%)"));
+    }
+
+    #[test]
+    fn windows_checkout_newlines_do_not_change_parity() {
+        let expected = render(&[e("file.new", "File", true), e("home.bold", "Home", false)]);
+        assert!(is_current(&expected, &expected));
+        assert!(is_current(&expected.replace('\n', "\r\n"), &expected));
+        assert!(!is_current(&expected.replace("Missing:", "Implemented:"), &expected));
+        assert!(!is_current(expected.trim_end(), &expected));
     }
 }

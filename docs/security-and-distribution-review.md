@@ -121,7 +121,7 @@ added. No legal conclusion about any organization's contracts or SAP entitlement
 
 ## Evidence
 
-- Local `cargo xtask ci`: all seven gates passed; **621 passed, 0 failed, 1 ignored** after
+- Local `cargo xtask ci`: all seven gates passed; **622 passed, 0 failed, 1 ignored** after
   hardening. Windows results are recorded separately by the exact-commit workflow run.
 - Six actual-loopback E2E tests cover native pane, MCP, discovery, member selections, pivots,
   refresh, undo, save/reopen, endpoint policy and error preservation. The 11 injected failure
@@ -140,3 +140,9 @@ added. No legal conclusion about any organization's contracts or SAP entitlement
   startup handshake, no inherited live credentials and cleanup when the native app closes.
 - Windows CI includes the native demo bootstrap, PE/subsystem validation, process-level
   round trip and authentication rejection checks. Check the actual run result before use.
+
+The first Windows run passed 620 tests (0 failed, 1 ignored) and six gates, then exposed
+CRLF conversion in the strict generated-parity comparison. The check now normalizes CRLF
+only, with a regression test that still rejects content/trailing-newline changes. Git attributes
+preserve Cargo.lock/parity LF and exact supplemental-license bytes across platforms. A simulated
+`core.autocrlf=true` checkout verified all 18 supplemental hashes and the Windows batch launcher.
