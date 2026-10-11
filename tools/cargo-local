@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -d "$repo_dir/../.rustup/toolchains/1.95.0-aarch64-apple-darwin" ]]; then
+  export RUSTUP_HOME="$repo_dir/../.rustup"
+fi
+cd "$repo_dir"
+exec cargo "$@"

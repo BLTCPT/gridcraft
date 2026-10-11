@@ -198,6 +198,7 @@ fn main() -> eframe::Result<()> {
     }
     let mut control_port: Option<u16> = std::env::var("GRIDCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut sample: Option<String> = None;
+    let mut analysis_demo = false;
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -206,6 +207,7 @@ fn main() -> eframe::Result<()> {
                 i += 1;
                 control_port = args.get(i).and_then(|p| p.parse().ok());
             }
+            "--analysis-demo" => analysis_demo = true,
             "--sample" => {
                 i += 1;
                 sample = Some(args.get(i).cloned().unwrap_or_else(|| "sales".into()));
@@ -240,6 +242,17 @@ fn main() -> eframe::Result<()> {
             log::warn!("{f}: {e}");
         }
     }
+    if analysis_demo {
+        session.new_workbook();
+        for (id, params) in [
+            ("analysis.connect", json!({})),
+            ("analysis.insert", json!({"query":"demo.sales","fiscalYear":2026,"rows":"Region","columns":"Product","measure":"Revenue"})),
+        ] {
+            if let Err(error) = session.execute(id, params) {
+                log::warn!("Analysis demo: {error}");
+            }
+        }
+    }
     if session.documents().is_empty() {
         session.new_workbook();
     }
@@ -247,6 +260,11 @@ fn main() -> eframe::Result<()> {
     app.after_engine(); // Show warnings from files opened on the command line.
     let control_port = control_port;
     load_prefs(&mut app);
+    if analysis_demo {
+        app.ui.ribbon_tab = "Analysis".into();
+        app.ui.ribbon_collapsed = false;
+        app.grid.pane = Some("analysis".into());
+    }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("GridCraft")
         .with_inner_size([1440.0, 900.0])

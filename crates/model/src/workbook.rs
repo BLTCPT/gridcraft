@@ -57,6 +57,9 @@ pub struct DocProps {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Workbook {
+    /// Session-only analytical binding; XLSX stores a disconnected value/pivot snapshot.
+    #[serde(skip)]
+    pub analysis: Option<crate::analysis::AnalysisBinding>,
     pub sheets: Vec<Arc<Sheet>>,
     pub names: Vec<DefinedName>,
     pub styles: StyleTable,
@@ -83,6 +86,7 @@ impl Workbook {
     /// A new workbook with one sheet, "Sheet1".
     pub fn new() -> Workbook {
         Workbook {
+            analysis: None,
             sheets: vec![Arc::new(Sheet::new("Sheet1"))],
             names: vec![],
             styles: StyleTable::default(),

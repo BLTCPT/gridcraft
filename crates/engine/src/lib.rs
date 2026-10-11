@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod analysis;
 pub mod catalog;
 pub mod cf;
 pub mod cmd;
@@ -84,6 +85,8 @@ pub enum Mode {
 
 #[derive(Clone, Debug)]
 pub struct DocState {
+    /// Ephemeral provider session, deliberately outside workbook history and file formats.
+    pub analysis_session: analysis::AnalysisSession,
     pub wb: Arc<Workbook>,
     pub calc: Calc,
     pub selection: Selection,
@@ -108,6 +111,7 @@ impl DocState {
         let wb = Arc::new(wb);
         let sel = Selection::at(wb.active().map(|s| s.view_active).unwrap_or_default());
         DocState {
+            analysis_session: analysis::AnalysisSession::default(),
             saved: wb.clone(),
             wb,
             calc,

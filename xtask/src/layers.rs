@@ -41,6 +41,7 @@ pub const TABLE: &[(&str, Class)] = &[
     // L7 apps (exempt) and tooling (unchecked)
     ("gridcraft", Class::Layer(7)),
     ("cli", Class::Layer(7)),
+    ("bw", Class::Layer(7)),
     ("web", Class::Layer(7)),
     ("xtask", Class::Exempt),
 ];

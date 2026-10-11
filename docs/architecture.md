@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -69,3 +69,16 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |
+
+## Experimental analysis extension (this fork)
+
+The [Analysis workspace](analysis-workspace.md) adds serializable query/binding types at L2,
+a GridCraft-owned XLSX metadata part at L2, provider/repository interfaces and XMLA codecs at
+L5, registered `analysis.*` commands at L5, and a thin Analysis ribbon/pane in L6 egui.
+Connection sessions are ephemeral engine document state. The optional L7 `gridcraft-bw` host
+uses engine codecs and owns native HTTPS transport; it does not replace the desktop app.
+The first interactive provider is synthetic. Live BW integration remains unverified.
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-11 | fork extension | Analysis model, commands, native pane, XLSX definition and XMLA diagnostic host; layering retained |

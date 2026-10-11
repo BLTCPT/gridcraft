@@ -313,6 +313,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
     // Calls of LAMBDA names are spelled like the names (the parser upper-cases them).
     wb.apply_name_call_case();
+    crate::analysis::read(&mut cx, &mut wb)?;
     wb.styles = cx.styles;
     Ok((wb, cx.report))
 }

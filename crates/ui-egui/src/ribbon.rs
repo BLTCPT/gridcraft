@@ -9,7 +9,7 @@ use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::widgets::{big_button, color_palette, icon_button, small_button, split_button, toggle_button};
 
-pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
+pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Analysis", "Review", "View", "Automate"];
 
 /// Leave room for the macOS traffic lights when the content extends into the title bar.
 pub const TITLE_LEFT_PAD: f32 = if cfg!(target_os = "macos") { 76.0 } else { 8.0 };
@@ -194,6 +194,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             "Page Layout" => page_layout(app, ui),
                             "Formulas" => formulas(app, ui),
                             "Data" => data(app, ui),
+                            "Analysis" => crate::analysis_pane::ribbon(app, ui),
                             "Review" => review(app, ui),
                             "View" => view(app, ui),
                             "Automate" => automate(app, ui),

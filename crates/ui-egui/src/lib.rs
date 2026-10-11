@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod analysis_pane;
 mod border_preview;
 mod cell_pictures;
 pub mod chartview;
@@ -135,6 +136,7 @@ pub struct Perf {
 }
 
 pub struct SheetApp {
+    pub analysis_draft: analysis_pane::AnalysisDraft,
     pub session: Session,
     pub ui: UiState,
     pub views: HashMap<(u64, usize), SheetView>,
@@ -167,6 +169,7 @@ pub struct SheetApp {
 impl SheetApp {
     pub fn new(session: Session, services: Services) -> SheetApp {
         SheetApp {
+            analysis_draft: Default::default(),
             session,
             ui: UiState::default(),
             views: HashMap::new(),
@@ -238,6 +241,9 @@ impl SheetApp {
         }
         let r = self.session.run(id, params);
         self.after_engine();
+        if r.is_ok() && (id.starts_with("analysis.") || matches!(id, "edit.undo" | "edit.redo")) {
+            analysis_pane::sync_applied(self);
+        }
         if id == "file.exportPdf"
             && let Ok(r) = &r
         {
@@ -615,7 +621,9 @@ impl SheetApp {
             tabs::status_bar(self, ui);
         }
         tabs::sheet_tabs(self, ui);
-        pivot_pane::show(self, ui);
+        if self.grid.pane.as_deref() != Some("analysis") {
+            pivot_pane::show(self, ui);
+        }
         panes::show(self, ui);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {
             let g0 = now_ms();

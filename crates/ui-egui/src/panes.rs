@@ -13,6 +13,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let title = match pane.as_str() {
                 "comments" => "Comments",
+                "analysis" => "Analysis Workspace",
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
@@ -28,6 +29,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
             "comments" => comments(app, ui),
+            "analysis" => crate::analysis_pane::show(app, ui),
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
             "formatChart" => format_chart(app, ui),

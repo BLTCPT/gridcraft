@@ -171,6 +171,7 @@ pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
     };
 
     let mut wb_rels = Rels::default();
+    crate::analysis::write(wb, &mut out, &mut wb_rels)?;
     let mut pivots = crate::pivot::PivotWriter::default();
     let mut sheets_xml = String::new();
     for (i, sheet) in wb.sheets.iter().enumerate() {

@@ -1,6 +1,7 @@
 //! The command registry. Ids follow Excel's ribbon (`home.bold`, `insert.chart`,
 //! `data.sortAscending`) plus primitive editing commands (`cell.set`, `selection.set`).
 
+pub mod analysis;
 pub mod data;
 pub mod draw;
 pub mod edit;
@@ -111,6 +112,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(sheet::specs());
         v.extend(insert::specs());
         v.extend(data::specs());
+        v.extend(analysis::specs());
         v.extend(formulas::specs());
         v.extend(review::specs());
         v.extend(view::specs());
