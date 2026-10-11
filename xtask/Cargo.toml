@@ -16,5 +16,6 @@ default = ["engine"]
 engine = ["dep:gridcraft-engine"]
 
 [dependencies]
+sha2 = "0.10"
 serde_json = { workspace = true }
 gridcraft-engine = { workspace = true, optional = true }

@@ -11,6 +11,8 @@ use crate::analysis::{AnalysisSession, AnalyticalProvider, ConnectionConfig, Fix
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
+        cmd!(query "analysis.rfc.capabilities", "RFC adapter status", [], None, "{}; unavailable state and documented-interface roadmap", always, rfc_capabilities),
+        cmd!(query "analysis.rfc.validateConfig", "Validate RFC destination draft", [], None, "{destination, client, language, authentication}; validates shape only, never loads SDK or connects", always, rfc_config),
         cmd!("analysis.poll", "Complete BW request", [], None, "{}; apply a completed transport response atomically", has_doc, poll),
         cmd!(query "analysis.cancel", "Cancel BW request", ["Analysis", "Connection"], None, "{}; discard in-flight result", has_doc, cancel),
         cmd!(query "analysis.discover", "Discover BW metadata", ["Analysis", "Data Source"], None, "{rowset, catalog?, cube?}", has_doc, discover_live),
@@ -467,4 +469,16 @@ fn bw_variables(s: &mut Session, p: &Json) -> Result<Json> {
     let mut definition = current(s)?;
     definition.bw.as_mut().ok_or_else(|| failure("This report is not an XMLA query."))?.variables = args.variables;
     render(s, definition, true)
+}
+
+fn rfc_capabilities(_: &mut Session, p: &Json) -> Result<Json> {
+    no_params(p, "analysis.rfc.capabilities")?;
+    Ok(crate::analysis::rfc::capabilities())
+}
+fn rfc_config(_: &mut Session, p: &Json) -> Result<Json> {
+    let config: crate::analysis::rfc::Config = strict(p, "analysis.rfc.validateConfig")?;
+    config.validate().map_err(failure)?;
+    Ok(
+        json!({"draftValid":true,"available":false,"sdkLoaded":false,"networkSent":false,"credentialsAccepted":false,"capabilities":crate::analysis::rfc::capabilities()}),
+    )
 }

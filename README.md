@@ -8,11 +8,16 @@ See [the Analysis guide](docs/analysis-workspace.md) for running the app, capabi
 command examples, the optional BW XMLA probe, and required server validation.
 
 ```sh
-tools/cargo-local run -p gridcraft -- --analysis-demo
+tools/cargo-local build -p gridcraft -p gridcraft-bw-sim
+target/debug/gridcraft --bw-demo
 ```
 
 This fork is based on [GridCraft by the ArtCraft team](https://github.com/storytold/gridcraft).
 Upstream copyright and MIT/Apache-2.0 notices are preserved. The custom changes are independent.
+
+Windows: download the exact-commit **Analysis Windows** CI artifact, verify the portable ZIP
+SHA-256 and open `START-DEMO.cmd`. See the [work-agent handoff](docs/work-agent-handoff.md).
+RFC/SNC is a planned company integration, explicitly unavailable in this build.
 
 ---
 

@@ -6,16 +6,20 @@ runtime, SAP binary or ABAP runtime is bundled or required to run the executable
 
 ## Download and run
 
-**Status:** workflow and packaging are local and unrun on Windows because publication is
-paused. No Windows executable artifact has been verified or delivered yet. Distribution
-notices and distinct branding also remain under review.
-
-When authorized, the `Analysis Windows` GitHub Actions workflow builds the exact feature-branch commit,
+The `Analysis Windows` GitHub Actions workflow builds the exact feature-branch commit,
 runs quality gates and network end-to-end tests on Windows, checks PE architecture and
 GUI/console subsystem, and publishes an **unsigned portable ZIP as a CI artifact**.
 This is not a public release or installer. Extract the ZIP into a user-writable directory.
 `BUILD.txt` contains the source commit; the adjacent `.sha256` file verifies the download.
 No administrator installation, file association changes or signing secrets are needed.
+
+For a one-command connected demo, open **START-DEMO.cmd** or run `gridcraft.exe --bw-demo`.
+It starts its own simulator on an available loopback port, creates the report, and opens the
+Analysis pane. Closing the app stops that simulator. Startup failures are shown in a dialog.
+This uses real local HTTP and requires no SAP credentials. `--bw-demo-check` exercises the
+same startup/query/cleanup path without opening a window (used by packaging CI).
+
+For manual connection/reconnection or fault demonstrations:
 
 1. Start `gridcraft-bw-sim.exe` in a terminal. It prints its loopback URL. Keep it running.
 2. Start `gridcraft.exe`, open **Analysis → Analysis workspace → Connection settings**.
@@ -31,8 +35,9 @@ No administrator installation, file association changes or signing secrets are n
 `gridcraft-cli.exe` exposes the same commands headlessly. `gridcraft-cli.exe mcp` installs
 the same transport in the MCP host. The desktop control channel uses those commands too.
 Run `.\smoke-analysis.ps1` from PowerShell if your local policy permits scripts. The script launches the
-simulator on port 18787 and verifies a real CLI → HTTP → pivot → XLSX → reopen/refresh path.
-For ordinary GUI use no PowerShell script is necessary.
+simulator on an available loopback port and verifies a real CLI → HTTP → pivot → XLSX → reopen/refresh path.
+The script also verifies 401, 403 and expired-session failures return nonzero and create no
+report file. For ordinary GUI use no PowerShell script is necessary.
 
 ## Build from source on Windows
 
@@ -86,3 +91,11 @@ variable does not make it supported. Do not interpret a blank member as clearing
 A true ABAP/BW runtime test requires a licensed, configured SAP environment. None is supplied
 or redistributed. Successful local tests establish this client's behavior against synthetic
 protocol fixtures, not AO/BICS compatibility or SAP certification.
+
+## RFC and production boundary
+
+The intended RFC/SNC route is documented in [the RFC adapter plan](rfc-adapter-design.md).
+It is explicitly unavailable in this build. [The work-agent handoff](work-agent-handoff.md)
+contains reproducible demo/build steps and the private company-configuration work still needed.
+A successful Windows CI run validates compilation and automated headless/native-component tests;
+a human must still confirm GUI rendering and interactions on the actual demonstration PC.

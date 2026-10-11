@@ -6,15 +6,18 @@ No company credentials, systems, workbooks, branding or private data were used.
 
 ## Publication and Windows status
 
-The public fork is `https://github.com/BLTCPT/gridcraft`. Read-only GitHub verification found
-only upstream `main` and `release`, both at `9f896c1249f40d18bf182199dc03042959be5f3f`.
-**No custom commits have been pushed.** The implementation, Windows workflow and portable
-packager remain on the local `feature/analysis-workspace` branch. Publication was authorized
-and subsequently paused pending authentication/licensing review. Nothing was deleted or
-rewritten remotely. No Windows CI run, binary artifact, release, deployment or upstream PR
-has been created. Mac binaries and synthetic protocol tests are available locally.
+The public fork is `https://github.com/BLTCPT/gridcraft`. Generic feature-branch publication
+was resumed by the owner after the initial review pause. `Analysis Windows` builds the exact
+commit and publishes an unsigned portable CI artifact; consult its run and `BUILD.txt` for
+terminal status/source identity. No production release, merge, deployment or upstream PR is
+part of this work. Automated Windows validation and a human demo-PC check are distinct.
 
-## Actual authentication behavior
+RFC/SNC is the leading intended production path. It remains **unavailable**, with a nonsecret
+config validator and mock dataset lifecycle only. See `rfc-adapter-design.md`. The working
+synthetic demo and optional live experimental transport below use XMLA; they do not establish
+RFC, SNC, BICS or AO compatibility.
+
+## Actual optional XMLA authentication behavior
 
 | Area | Implemented behavior |
 |---|---|
@@ -42,11 +45,11 @@ verified. There is no shared service account provisioned or installed by this ta
 ### Required authentication go/no-go before further real integration
 
 Obtain the supported **nonproduction** connection flow from the organization's SAP/Basis and
-identity owners: how Windows users authenticate today, which BW ICF XMLA authentication is
-approved, and whether the desired endpoint supports it. Windows login, BOBJ BI login and BW
-analytical identity are distinct. An AO login or browser SAML session does not automatically
-grant a raw HTTP client a BW session. A future integrated Windows auth implementation must be
-restricted to approved endpoints, preserve employee identity and define any NTLM fallback.
+identity owners: Windows RFC/SNC settings, company-provided licensed SDK, supported documented
+OLAP BAPIs and test query. If XMLA is separately desired, confirm approved ICF authentication.
+Windows login, BOBJ BI login and BW analytical identity are distinct. An AO login or browser
+SAML session does not automatically grant an external client a BW session. Any future Windows
+auth implementation must preserve employee identity and avoid implicit downgrade/fallback.
 
 Run an early Windows test with **two separate authorized test users**: one allowed and one
 denied a particular query/data slice. Verify the BW-observed identity, authorization-filtered
@@ -85,10 +88,18 @@ The new prototype uses a separate unsigned portable ZIP and does not call that M
 Its EXE CompanyName was changed locally to GridCraft contributors. Legacy upstream packaging
 is retained for provenance but must not be used to ship an independently branded installer.
 
-`docs/dependency-license-inventory.tsv` records **270 locked Windows non-development dependency
-license declarations**, traversed from the four proposed executables using Cargo metadata with
-`--filter-platform x86_64-pc-windows-msvc`. Build dependencies are included; this is an inventory,
-not a full source-file/feature/binary license audit or complete SBOM.
+`docs/dependency-license-inventory.tsv` records **243 locked Windows normal/build dependency
+packages** in the four-executable graph preflight. Unlike metadata-only reachability, this
+uses Cargo's selected target/features. The final Windows bundle instead uses the actual build's
+`compiler-artifact` records, rejects test/non-Windows executable manifests and requires all four
+successful release binaries. Host build dependencies are included. This is not a complete SBOM.
+
+`cargo xtask licenses` copies crate license/notice texts and verifies 18 pinned upstream
+supplemental texts (including egui fallback fonts), with per-file SHA-256 and explicit selected
+license alternatives. The preflight assembled **459 original texts across 243 packages**.
+`third-party/THIRD-PARTY-NOTICES.txt`, `inventory.json` and individual files are included in the
+portable ZIP. Unknown expressions, no notice texts, changed supplemental hashes, stale output
+or optional craft-fonts inputs fail the packager. `legal/sources.json` records provenance.
 
 Notable declarations requiring separate review/notice handling:
 
@@ -102,16 +113,16 @@ Notable declarations requiring separate review/notice handling:
   in an OR expression is not evidence that the application is GPL-only.
 - Other declarations include MIT, Apache-2.0, ISC, BSD, Zlib, BSL-1.0 and Unlicense alternatives.
 
-The portable prototype currently carries top-level MIT/Apache licenses, NOTICE and attribution,
-**but does not assemble all dependency/font license texts and notices**. Resolve that before
-any enterprise distribution claim. Renaming or rewriting the added integration would not
-resolve omitted notices for upstream/dependency code still used. Review exact enabled features,
-source licenses, font licenses, native build inputs and final binaries before distribution.
-No legal conclusion about a particular organization's contracts or SAP entitlements is made.
+The collector assembles reviewed inputs reproducibly; it cannot by itself guarantee exhaustive
+source-file/native-toolchain rights or legal approval. Build-specific package/features are
+recorded for review. Retaining both alternatives' texts does not select a GPL alternative when
+Apache is explicitly selected. No SAP SDK, SNC provider, proprietary font or vendor artwork was
+added. No legal conclusion about any organization's contracts or SAP entitlements is made.
 
 ## Evidence
 
-- Local `cargo xtask ci`: all seven gates passed; **608 passed, 0 failed, 1 ignored**.
+- Local `cargo xtask ci`: all seven gates passed; **621 passed, 0 failed, 1 ignored** after
+  hardening. Windows results are recorded separately by the exact-commit workflow run.
 - Six actual-loopback E2E tests cover native pane, MCP, discovery, member selections, pivots,
   refresh, undo, save/reopen, endpoint policy and error preservation. The 11 injected failure
   modes are synthetic; they are not captured SAP server responses.
@@ -120,4 +131,12 @@ No legal conclusion about a particular organization's contracts or SAP entitleme
 - Additional local process checks rejected a temporary self-signed TLS server before any HTTP
   credentials were transmitted, omitted synthetic credential sentinels from errors, and proved
   the simulator ignores a different set of synthetic live credentials in its launch environment.
-- Windows workflow/packaging are prepared but unexecuted while publication is paused.
+- Independent local security review hardened SOAP response nesting, namespace/attribute and
+  XML validity checks, with regression tests. Closing a document or dropping its session now
+  cancels queued requests; the transport checks cancellation before sending HTTP.
+- RFC draft commands reject credentials, do not journal config, and prove that SDK/network
+  capabilities remain false. Mock dataset cleanup is exercised on success/failure/cancellation.
+- One-command network demo uses an owned sibling simulator, ephemeral loopback port, bounded
+  startup handshake, no inherited live credentials and cleanup when the native app closes.
+- Windows CI includes the native demo bootstrap, PE/subsystem validation, process-level
+  round trip and authentication rejection checks. Check the actual run result before use.

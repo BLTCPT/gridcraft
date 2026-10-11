@@ -208,6 +208,16 @@ pub struct Session {
     pub draw_width: f32,
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        for d in &self.docs {
+            if let Some(pending) = &d.analysis_session.pending {
+                pending.cancel();
+            }
+        }
+    }
+}
+
 impl Session {
     pub fn new() -> Session {
         Session::default()
@@ -242,6 +252,9 @@ impl Session {
     }
     pub fn close_document(&mut self, i: usize) {
         if i < self.docs.len() {
+            if let Some(pending) = self.docs.get(i).and_then(|d| d.analysis_session.pending.as_ref()) {
+                pending.cancel();
+            }
             self.docs.remove(i);
             if self.active >= self.docs.len() {
                 self.active = self.docs.len().saturating_sub(1);

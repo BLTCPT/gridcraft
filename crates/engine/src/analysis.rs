@@ -1,6 +1,7 @@
 //! Analytical-provider boundary. The demo provider is synthetic and performs no network I/O.
 //! BI-platform repository access and BW/HANA analytical execution are separate capabilities.
 pub mod network;
+pub mod rfc;
 pub mod xmla;
 
 use gridcraft_core::Value;
@@ -30,7 +31,7 @@ impl ProviderKind {
             Self::Fixture => "Synthetic demo",
             Self::BwXmla => "SAP BW XMLA (experimental)",
             Self::BwSimulator => "Local XMLA simulator (synthetic)",
-            Self::BwRfc => "SAP BW RFC/BICS (not implemented)",
+            Self::BwRfc => "SAP BW RFC/OLAP BAPIs (unavailable)",
             Self::HanaIna => "SAP HANA InA (not implemented)",
         }
     }
@@ -49,6 +50,12 @@ pub struct ConnectionConfig {
 
 impl ConnectionConfig {
     pub fn validate(&self) -> Result<(), String> {
+        if self.provider == ProviderKind::BwRfc {
+            if !self.analytical_url.is_empty() || !self.repository_url.is_empty() {
+                return Err("RFC is not an HTTP/BOBJ URL. Use analysis.rfc.validateConfig to review a non-secret destination draft.".into());
+            }
+            return Ok(());
+        }
         for value in [&self.analytical_url, &self.repository_url] {
             if value.is_empty() {
                 continue;
@@ -176,6 +183,9 @@ impl AnalysisSession {
         Ok(FixtureProvider)
     }
     pub fn unsupported(kind: ProviderKind) -> String {
+        if kind == ProviderKind::BwRfc {
+            return "RFC adapter unavailable: no SAP SDK or SNC provider loaded, no credentials accepted, no network request sent. A licensed company-provided SDK and verified OLAP BAPI interface are required; internal BICS is not implemented.".into();
+        }
         format!(
             "{}: live transport is unavailable in this build. No network request was sent. BI-platform REST is a workbook repository interface, not a BW/HANA query engine.",
             kind.label()

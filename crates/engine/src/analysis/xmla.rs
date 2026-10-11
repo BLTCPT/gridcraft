@@ -71,131 +71,223 @@ pub struct Rowset {
     pub source: &'static str,
 }
 
+const SOAP: &str = "http://schemas.xmlsoap.org/soap/envelope/";
+const ROWSET: &str = "urn:schemas-microsoft-com:xml-analysis:rowset";
+const XSD: &str = "http://www.w3.org/2001/XMLSchema";
+const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Envelope,
+    Header,
+    Body,
+    Response,
+    Return,
+    Root,
+    Metadata,
+    Row,
+    Field,
+}
+
+fn namespace_name(namespace: ResolveResult<'_>) -> Result<String, String> {
+    match namespace {
+        ResolveResult::Bound(ns) => std::str::from_utf8(ns.as_ref()).map(str::to_owned).map_err(|_| "Invalid XML namespace.".into()),
+        ResolveResult::Unbound => Ok(String::new()),
+        ResolveResult::Unknown(_) => Err("Undeclared XML namespace prefix.".into()),
+    }
+}
+
+fn valid_xml_text(text: &str) -> bool {
+    text.chars().all(|c| matches!(c, '\t' | '\r' | '\n') || (c >= '\u{20}' && c != '\u{fffe}' && c != '\u{ffff}'))
+}
+
+/// Validate every attribute, including ignored metadata. Iterator errors must never be skipped.
+/// Attribute identity uses its expanded name; a different prefix cannot duplicate xsi:nil.
+fn attributes(reader: &NsReader<&[u8]>, element: &quick_xml::events::BytesStart<'_>) -> Result<Option<bool>, String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut nil = None;
+    for attribute in element.attributes().with_checks(true) {
+        let attribute = attribute.map_err(|_| "Malformed or duplicate XML attribute.")?;
+        let value = attribute.decode_and_unescape_value(reader.decoder()).map_err(|_| "Invalid XML attribute value.")?;
+        if !valid_xml_text(&value) || attribute.value.contains(&b'<') {
+            return Err("Invalid XML attribute value.".into());
+        }
+        if attribute.key.as_ref() == b"xmlns" || attribute.key.as_ref().starts_with(b"xmlns:") {
+            continue;
+        }
+        let (namespace, local) = reader.resolve_attribute(attribute.key);
+        let namespace = namespace_name(namespace)?;
+        let local = std::str::from_utf8(local.as_ref()).map_err(|_| "Invalid XML attribute name.")?.to_string();
+        if !seen.insert((namespace.clone(), local.clone())) {
+            return Err("Duplicate expanded XML attribute name.".into());
+        }
+        if local == "nil" {
+            if namespace != XSI {
+                return Err("XMLA null markers must use the XML Schema instance namespace.".into());
+            }
+            nil = Some(match value.as_ref() {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => return Err("Invalid xsi:nil boolean.".into()),
+            });
+        }
+    }
+    Ok(nil)
+}
+
+fn append_text(scope: Option<&Scope>, field: &mut Option<(String, Option<String>)>, text: &str) -> Result<(), String> {
+    if !valid_xml_text(text) {
+        return Err("Invalid XML character.".into());
+    }
+    match scope {
+        Some(Scope::Field) => match field {
+            Some((_, Some(value))) => value.push_str(text),
+            Some((_, None)) if text.is_empty() => {}
+            _ => return Err("A null XMLA field cannot contain text.".into()),
+        },
+        Some(Scope::Header | Scope::Metadata) => {}
+        _ if text.trim().is_empty() => {}
+        _ => return Err("Unexpected text outside an XMLA field.".into()),
+    }
+    Ok(())
+}
+
 pub fn parse_rowset(xml: &[u8]) -> Result<Rowset, String> {
     if xml.len() > MAX_BYTES {
         return Err("XMLA response exceeds 8 MiB.".into());
     }
+    if !std::str::from_utf8(xml).is_ok_and(valid_xml_text) {
+        return Err("XMLA responses must contain valid UTF-8 XML characters.".into());
+    }
     let mut reader = NsReader::from_reader(xml);
-    let mut stack: Vec<String> = Vec::new();
+    reader.config_mut().expand_empty_elements = true;
+    reader.config_mut().check_comments = true;
+    let mut stack = Vec::new();
     let mut rows = Vec::new();
     let mut row: Option<BTreeMap<String, Option<String>>> = None;
-    let mut field: Option<(String, Option<String>)> = None;
-    let mut row_depth = 0;
-    let mut response = false;
-    let mut root = false;
+    let mut field = None;
+    let (mut envelope, mut header, mut body, mut response, mut returned, mut root, mut schema, mut declared) =
+        (false, false, false, false, false, false, false, false);
     loop {
         let (namespace, event) = reader.read_resolved_event().map_err(|_| "Malformed XMLA response.".to_string())?;
-        let rowset_namespace = matches!(&namespace, ResolveResult::Bound(ns) if ns.as_ref() == b"urn:schemas-microsoft-com:xml-analysis:rowset");
-        let xmla_namespace = matches!(&namespace, ResolveResult::Bound(ns) if ns.as_ref() == XMLA.as_bytes());
+        let namespace = namespace_name(namespace)?;
         match event {
             Event::DocType(_) | Event::PI(_) => return Err("DTD and processing instructions are not accepted.".into()),
-            Event::Start(e) => {
-                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
-                if matches!(name.as_str(), "Fault" | "Error" | "Messages") {
-                    return Err("The server returned an XMLA error. No results were imported.".into());
+            Event::Decl(e) => {
+                if declared || envelope || !stack.is_empty() || e.version().map_err(|_| "Invalid XML declaration.")?.as_ref() != b"1.0" {
+                    return Err("Only one XML 1.0 declaration before the envelope is supported.".into());
                 }
+                let declaration = std::str::from_utf8(&e).map_err(|_| "Invalid XML declaration.")?;
+                let element = quick_xml::events::BytesStart::from_content(declaration, 3);
+                attributes(&reader, &element)?;
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|_| "Invalid XML declaration.")?;
+                    let valid = match attribute.key.as_ref() {
+                        b"version" => attribute.value.as_ref() == b"1.0",
+                        b"encoding" => attribute.value.eq_ignore_ascii_case(b"UTF-8"),
+                        b"standalone" => matches!(attribute.value.as_ref(), b"yes" | b"no"),
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err("Unsupported XML declaration.".into());
+                    }
+                }
+                declared = true;
+            }
+            Event::Start(e) => {
                 if stack.len() >= 64 {
                     return Err("XMLA nesting limit exceeded.".into());
                 }
-                if (name == "DiscoverResponse" || name == "ExecuteResponse") && xmla_namespace && stack.last().is_some_and(|s| s == "Body") {
-                    response = true;
-                }
-                if name == "root" && response {
-                    if !rowset_namespace {
-                        return Err("Only XMLA tabular rowsets are supported; multidimensional cellsets need a separate decoder.".into());
-                    }
-                    root = true;
-                }
-                if name == "row" && root && stack.last().is_some_and(|s| s == "root") {
-                    if rows.len() >= MAX_ROWS {
-                        return Err("XMLA row limit exceeded.".into());
-                    }
-                    row = Some(BTreeMap::new());
-                    row_depth = stack.len() + 1;
-                } else if row.is_some() && stack.len() == row_depth {
-                    if row.as_ref().is_some_and(|r| r.len() >= 256) {
-                        return Err("XMLA column limit exceeded.".into());
-                    }
-                    let nil = e
-                        .attributes()
-                        .with_checks(true)
-                        .any(|a| a.ok().is_some_and(|a| a.key.local_name().as_ref() == b"nil" && a.value.as_ref() == b"true"));
-                    field = Some((name.clone(), if nil { None } else { Some(String::new()) }));
-                } else if field.is_some() {
-                    return Err("Nested XMLA field values are unsupported.".into());
-                }
-                stack.push(name);
-            }
-            Event::Empty(e) => {
-                if field.is_some() {
-                    return Err("Nested XMLA field values are unsupported.".into());
-                }
-                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
-                if matches!(name.as_str(), "Error" | "Fault") {
+                let name = std::str::from_utf8(e.local_name().as_ref()).map_err(|_| "Invalid XMLA element name.")?.to_string();
+                if matches!(name.as_str(), "Fault" | "Error" | "Messages") {
                     return Err("The server returned an XMLA error. No results were imported.".into());
                 }
-                if row.is_some() && stack.len() == row_depth {
-                    let nil = e
-                        .attributes()
-                        .with_checks(true)
-                        .any(|a| a.ok().is_some_and(|a| a.key.local_name().as_ref() == b"nil" && a.value.as_ref() == b"true"));
-                    if let Some(r) = &mut row
-                        && (r.len() >= 256 || r.insert(name, if nil { None } else { Some(String::new()) }).is_some())
-                    {
-                        return Err("Duplicate XMLA field or column limit exceeded.".into());
+                let nil = attributes(&reader, &e)?;
+                let scope = match stack.last() {
+                    None if !envelope && namespace == SOAP && name == "Envelope" => {
+                        envelope = true;
+                        Scope::Envelope
                     }
+                    Some(Scope::Envelope) if !header && !body && namespace == SOAP && name == "Header" => {
+                        header = true;
+                        Scope::Header
+                    }
+                    Some(Scope::Envelope) if !body && namespace == SOAP && name == "Body" => {
+                        body = true;
+                        Scope::Body
+                    }
+                    Some(Scope::Body) if !response && namespace == XMLA && matches!(name.as_str(), "DiscoverResponse" | "ExecuteResponse") => {
+                        response = true;
+                        Scope::Response
+                    }
+                    Some(Scope::Response) if !returned && namespace == XMLA && name == "return" => {
+                        returned = true;
+                        Scope::Return
+                    }
+                    Some(Scope::Return) if !root && namespace == ROWSET && name == "root" => {
+                        root = true;
+                        Scope::Root
+                    }
+                    Some(Scope::Root) if !schema && rows.is_empty() && namespace == XSD && name == "schema" => {
+                        schema = true;
+                        Scope::Metadata
+                    }
+                    Some(Scope::Header | Scope::Metadata) => Scope::Metadata,
+                    Some(Scope::Root) if namespace == ROWSET && name == "row" => {
+                        if rows.len() >= MAX_ROWS {
+                            return Err("XMLA row limit exceeded.".into());
+                        }
+                        row = Some(BTreeMap::new());
+                        Scope::Row
+                    }
+                    Some(Scope::Row) if namespace == ROWSET => {
+                        if row.as_ref().is_some_and(|r| r.len() >= 256 || r.contains_key(&name)) {
+                            return Err("Duplicate XMLA field or column limit exceeded.".into());
+                        }
+                        field = Some((name, if nil == Some(true) { None } else { Some(String::new()) }));
+                        Scope::Field
+                    }
+                    _ => return Err("Expected a single SOAP/XMLA tabular response with correctly namespaced elements.".into()),
+                };
+                if nil.is_some() && scope != Scope::Field {
+                    return Err("XMLA null markers are supported only on row fields.".into());
                 }
-                if name_is_root(&e) && response && rowset_namespace {
-                    root = true;
-                }
+                stack.push(scope);
             }
             Event::Text(e) => {
-                if let Some((_, Some(value))) = &mut field {
-                    let text = e.xml_content().map_err(|_| "Invalid XMLA text encoding.".to_string())?;
-                    value.push_str(&quick_xml::escape::unescape(&text).map_err(|_| "Invalid XMLA entity.".to_string())?);
-                }
+                let text = e.xml_content().map_err(|_| "Invalid XMLA text encoding.")?;
+                let text = quick_xml::escape::unescape(&text).map_err(|_| "Invalid XMLA entity.")?;
+                append_text(stack.last(), &mut field, &text)?;
             }
             Event::CData(e) => {
-                if let Some((_, Some(value))) = &mut field {
-                    value.push_str(&e.decode().map_err(|_| "Invalid XMLA text encoding.".to_string())?);
+                if !matches!(stack.last(), Some(Scope::Field | Scope::Metadata)) {
+                    return Err("Unexpected XMLA CDATA.".into());
                 }
+                append_text(stack.last(), &mut field, &e.decode().map_err(|_| "Invalid XMLA text encoding.")?)?;
             }
             Event::GeneralRef(e) => {
-                if let Some((_, Some(value))) = &mut field {
-                    let name = e.decode().map_err(|_| "Invalid XMLA entity.".to_string())?;
-                    value.push_str(
-                        &quick_xml::escape::unescape(&format!("&{name};")).map_err(|_| "External XMLA entities are unsupported.".to_string())?,
-                    );
-                } else {
-                    return Err("Unexpected XMLA entity.".into());
-                }
+                let entity = format!("&{};", e.decode().map_err(|_| "Invalid XMLA entity.")?);
+                let text = quick_xml::escape::unescape(&entity).map_err(|_| "External or invalid XMLA entities are unsupported.")?;
+                append_text(stack.last(), &mut field, &text)?;
             }
-            Event::End(_) => {
-                if stack.len() == row_depth + 1
-                    && let Some((name, value)) = field.take()
-                    && let Some(r) = &mut row
-                    && r.insert(name, value).is_some()
-                {
-                    return Err("Duplicate XMLA field.".into());
+            Event::End(_) => match stack.pop() {
+                Some(Scope::Field) => {
+                    let (name, value) = field.take().ok_or("Missing XMLA field state.")?;
+                    row.as_mut().ok_or("Missing XMLA row state.")?.insert(name, value);
                 }
-                if stack.len() == row_depth
-                    && let Some(r) = row.take()
-                {
-                    rows.push(r);
-                }
-                stack.pop();
-            }
+                Some(Scope::Row) => rows.push(row.take().ok_or("Missing XMLA row state.")?),
+                Some(_) => {}
+                None => return Err("Unexpected XMLA end element.".into()),
+            },
             Event::Eof => break,
-            _ => {}
+            Event::Comment(_) => {}
+            Event::Empty(_) => return Err("Unexpanded XMLA element.".into()),
         }
     }
-    if !response || !root || !stack.is_empty() {
+    if !envelope || !body || !response || !returned || !root || !stack.is_empty() {
         return Err("Expected a complete XMLA tabular response. Multidimensional cellsets are not supported.".into());
     }
     Ok(Rowset { rows, source: "xmla-rowset" })
-}
-fn name_is_root(e: &quick_xml::events::BytesStart<'_>) -> bool {
-    e.local_name().as_ref() == b"root"
 }
 
 #[cfg(test)]
@@ -245,5 +337,82 @@ mod tests {
             assert!(parse_rowset(xml.as_bytes()).is_err(), "{xml}");
         }
         assert!(parse_rowset(&vec![b' '; MAX_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn rowset_requires_one_qualified_soap_document() {
+        let valid = wrap("<row><A>1</A></row>");
+        for xml in [
+            valid.replace(SOAP, "urn:fake-soap"),
+            valid.replace("<row>", "<row xmlns=\"urn:fake-rows\">"),
+            valid.replace("<A>", "<A xmlns=\"urn:fake-fields\">"),
+            format!("{valid}{valid}"),
+            format!("{}<root xmlns=\"{ROWSET}\"><row><A>1</A></row></root>", wrap("")),
+            wrap("<root><row><A>1</A></row></root>"),
+            valid.replace("<return>", "<wrong><return>").replace("</return>", "</return></wrong>"),
+            valid.replace("</return>", "</return><return/>"),
+            valid.replace("</s:Body>", "</s:Body><s:Body/>"),
+            format!("{valid}trailing text"),
+            valid.replace("<A>", "<x:A>").replace("</A>", "</x:A>"),
+        ] {
+            assert!(parse_rowset(xml.as_bytes()).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
+    fn all_attributes_and_null_markers_are_validated() {
+        for field in [
+            "<A nil=bad>1</A>",
+            "<A x=\"1\" x=\"2\">1</A>",
+            "<A nil=\"true\">1</A>",
+            "<A xmlns:x=\"urn:fake\" x:nil=\"true\">1</A>",
+            "<A xmlns:x=\"http://www.w3.org/2001/XMLSchema-instance\" x:nil=\"yes\"/>",
+            "<A xmlns:x=\"http://www.w3.org/2001/XMLSchema-instance\" x:nil=\"true\">1</A>",
+            "<A xmlns:x=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:y=\"http://www.w3.org/2001/XMLSchema-instance\" x:nil=\"true\" y:nil=\"false\"/>",
+            "<A ignored=\"&external;\">1</A>",
+            "<A ignored=\"<\">1</A>",
+            "<A ignored=\"&#0;\">1</A>",
+            "<A>&#0;</A>",
+        ] {
+            assert!(parse_rowset(wrap(&format!("<row>{field}</row>")).as_bytes()).is_err(), "{field}");
+        }
+        let xml = wrap(&format!("<row xmlns:i=\"{XSI}\"><A i:nil=\"true\"/><B i:nil=\"1\"/><C i:nil=\"false\">1</C><D i:nil=\"0\">0</D><E/></row>"));
+        let rows = parse_rowset(xml.as_bytes()).unwrap().rows;
+        assert_eq!(rows[0]["A"], None);
+        assert_eq!(rows[0]["B"], None);
+        assert_eq!(rows[0]["C"], Some("1".into()));
+        assert_eq!(rows[0]["D"], Some("0".into()));
+        assert_eq!(rows[0]["E"], Some(String::new()));
+    }
+
+    #[test]
+    fn schema_metadata_header_empty_rows_and_safe_entities_remain_supported() {
+        let xml = format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>{}",
+            wrap(&format!(
+                "<xs:schema xmlns:xs=\"{XSD}\" targetNamespace=\"{ROWSET}\"><xs:element name=\"root\"><xs:annotation><xs:documentation>Names &amp; values</xs:documentation></xs:annotation></xs:element></xs:schema><!-- valid comment --><row/><row><A><![CDATA[x&y]]> &amp; &#49;</A></row>"
+            ))
+            .replace("<s:Body>", "<s:Header><Session xmlns=\"urn:schemas-microsoft-com:xml-analysis\" SessionId=\"opaque\"/></s:Header><s:Body>")
+        );
+        let rows = parse_rowset(xml.as_bytes()).unwrap().rows;
+        assert!(rows[0].is_empty());
+        assert_eq!(rows[1]["A"], Some("x&y & 1".into()));
+        assert!(parse_rowset(wrap("").as_bytes()).unwrap().rows.is_empty());
+        let empty = wrap("").replace(&format!("<root xmlns=\"{ROWSET}\"></root>"), &format!("<root xmlns=\"{ROWSET}\"/>"));
+        assert!(parse_rowset(empty.as_bytes()).unwrap().rows.is_empty());
+    }
+
+    #[test]
+    fn metadata_cannot_hide_malformed_xml_or_unsupported_declarations() {
+        for xml in [
+            format!("{}<?xml version=\"1.0\"?>", wrap("")),
+            format!("<?xml version=\"1.0\" version=\"1.0\"?>{}", wrap("")),
+            format!("<?xml version=\"1.0\" encoding=\"UTF-16\"?>{}", wrap("")),
+            wrap("<!-- bad -- comment -->"),
+            wrap(&format!("<x:schema xmlns:x=\"{XSD}\" invalid=unquoted/>")),
+            wrap(&format!("<x:schema xmlns:x=\"{XSD}\"><x:annotation>&external;</x:annotation></x:schema>")),
+        ] {
+            assert!(parse_rowset(xml.as_bytes()).is_err(), "{xml}");
+        }
     }
 }

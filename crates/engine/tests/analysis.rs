@@ -230,3 +230,60 @@ fn xmla_operations_are_commands_and_never_send_requests() {
     assert!(s.execute("analysis.xmla.executeRequest", json!({"catalog":"BW","mdx":"UPDATE CUBE X"})).is_err());
     assert!(s.journal.is_empty());
 }
+
+#[test]
+fn closing_documents_and_dropping_session_cancel_queued_requests() {
+    use gridcraft_engine::analysis::network::{Request, Transport};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+    #[derive(Default)]
+    struct HeldTransport {
+        flags: Mutex<Vec<Arc<AtomicBool>>>,
+    }
+    impl Transport for HeldTransport {
+        fn start(&self, request: Request) -> Result<mpsc::Receiver<Result<Vec<u8>, String>>, String> {
+            self.flags.lock().unwrap().push(request.canceled);
+            let (_tx, rx) = mpsc::channel();
+            Ok(rx)
+        }
+    }
+    let t = Arc::new(HeldTransport::default());
+    let mut s = blank();
+    s.analysis_transport = Some(t.clone());
+    for _ in 0..2 {
+        s.execute("analysis.configure", json!({"provider":"bwXmla","analyticalUrl":"https://approved.example/xmla"})).unwrap();
+        s.execute("analysis.connect", json!({})).unwrap();
+        if t.flags.lock().unwrap().len() == 1 {
+            s.close_document(0);
+            s.new_workbook();
+        }
+    }
+    assert!(t.flags.lock().unwrap()[0].load(Ordering::Relaxed));
+    assert!(!t.flags.lock().unwrap()[1].load(Ordering::Relaxed));
+    drop(s);
+    assert!(t.flags.lock().unwrap()[1].load(Ordering::Relaxed));
+}
+
+#[test]
+fn rfc_configuration_is_only_a_validated_unavailable_draft() {
+    let mut s = blank();
+    let caps = s.execute("analysis.rfc.capabilities", json!({})).unwrap();
+    assert_eq!(caps["available"], false);
+    assert_eq!(caps["sdkLoaded"], false);
+    let mut config = json!({"destination":{"kind":"direct","ashost":"bw.example","sysnr":"00"},"client":"100","language":"EN","authentication":{"kind":"snc","partnerName":"p:CN=BW","myName":null,"providerLibrary":"C:\\approved\\snc.dll","qop":3}});
+    let result = s.execute("analysis.rfc.validateConfig", config.clone()).unwrap();
+    assert_eq!(result["networkSent"], false);
+    config["authentication"]["qop"] = json!(1);
+    assert!(s.execute("analysis.rfc.validateConfig", config.clone()).is_err());
+    config["authentication"]["qop"] = json!(3);
+    config["authentication"]["password"] = json!("SYNTHETIC_SECRET");
+    assert!(!s.execute("analysis.rfc.validateConfig", config).unwrap_err().to_string().contains("SYNTHETIC_SECRET"));
+    s.execute("analysis.configure", json!({"provider":"bwRfc"})).unwrap();
+    let err = s.execute("analysis.connect", json!({})).unwrap_err().to_string();
+    assert!(err.contains("no SAP SDK"));
+    assert!(!s.doc().unwrap().analysis_session.connected);
+    assert!(s.journal.iter().all(|(name, _)| !name.starts_with("analysis.")));
+}

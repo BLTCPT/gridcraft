@@ -8,6 +8,7 @@
 mod assets;
 mod ico;
 mod layers;
+mod licenses;
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
 mod parity;
 mod stats;
@@ -29,6 +30,8 @@ commands:
                   write docs/parity-checklist.md from gridcraft_engine::catalog (implemented vs missing ids)
   version [set X.Y.Z[-pre]]
                   print or set the workspace version ([workspace.package] in Cargo.toml)
+  licenses --out PATH [--artifacts PATH]
+                  collect verified Windows dependency/font notices for the four packaged executables
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
@@ -42,6 +45,7 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
+        Some("licenses") => licenses::run(&root(), &rest),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root(), &rest),
         Some("ico") => ico::run(&rest),

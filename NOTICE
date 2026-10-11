@@ -14,9 +14,10 @@ list (author, source, license) is in ATTRIBUTION.md.
 
 Repository artwork is original to GridCraft. Compiled binaries also include third-party
 Rust dependencies and egui fallback fonts; see docs/dependency-license-inventory.tsv and
-docs/security-and-distribution-review.md. The prototype package does not yet assemble all
-third-party license texts; distribution review is incomplete. Optional craft-fonts builds
-(CRAFT_FONTS_DIR) additionally require their font licenses.
+docs/security-and-distribution-review.md. The portable Windows packager assembles verified
+dependency and fallback-font notice texts under third-party/ using its actual Cargo build
+manifest. Engineering notice assembly does not constitute legal clearance. Optional craft-fonts
+builds (CRAFT_FONTS_DIR) are rejected until their additional license set is reviewed.
 
 Modified version: GridCraft Analysis workspace (experimental).
 Based on GridCraft by the ArtCraft team. This fork is independent and is not

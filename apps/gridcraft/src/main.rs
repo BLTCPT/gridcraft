@@ -10,6 +10,7 @@
 
 #[cfg(target_os = "macos")]
 mod apple_events;
+mod bw_demo;
 mod control_server;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
@@ -21,7 +22,12 @@ use gridcraft_engine::Session;
 use gridcraft_ui_egui::{Services, SheetApp};
 use serde_json::json;
 
-struct App(SheetApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>, #[cfg(target_os = "macos")] fmv_macos_events::Inbox);
+struct App(
+    SheetApp,
+    #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>,
+    #[cfg(target_os = "macos")] fmv_macos_events::Inbox,
+    #[allow(dead_code)] Option<bw_demo::Demo>,
+);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -199,6 +205,8 @@ fn main() -> eframe::Result<()> {
     let mut control_port: Option<u16> = std::env::var("GRIDCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut sample: Option<String> = None;
     let mut analysis_demo = false;
+    let mut network_demo = false;
+    let mut demo_check = false;
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -208,6 +216,11 @@ fn main() -> eframe::Result<()> {
                 control_port = args.get(i).and_then(|p| p.parse().ok());
             }
             "--analysis-demo" => analysis_demo = true,
+            "--bw-demo" => network_demo = true,
+            "--bw-demo-check" => {
+                network_demo = true;
+                demo_check = true;
+            }
             "--sample" => {
                 i += 1;
                 sample = Some(args.get(i).cloned().unwrap_or_else(|| "sales".into()));
@@ -243,7 +256,25 @@ fn main() -> eframe::Result<()> {
             log::warn!("{f}: {e}");
         }
     }
-    if analysis_demo {
+    let mut demo_error = None;
+    let demo = if network_demo {
+        match bw_demo::start(&mut session) {
+            Ok(demo) => Some(demo),
+            Err(error) => {
+                demo_error = Some(error);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if demo_check {
+        return match demo_error {
+            Some(error) => Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(error)))),
+            None => Ok(()),
+        };
+    }
+    if analysis_demo && !network_demo {
         session.new_workbook();
         for (id, params) in [
             ("analysis.connect", json!({})),
@@ -261,7 +292,10 @@ fn main() -> eframe::Result<()> {
     app.after_engine(); // Show warnings from files opened on the command line.
     let control_port = control_port;
     load_prefs(&mut app);
-    if analysis_demo {
+    if let Some(error) = demo_error {
+        app.message = Some(("Synthetic demo could not start".into(), error));
+    }
+    if analysis_demo || network_demo {
         app.ui.ribbon_tab = "Analysis".into();
         app.ui.ribbon_collapsed = false;
         app.grid.pane = Some("analysis".into());
@@ -309,6 +343,7 @@ fn main() -> eframe::Result<()> {
                 None,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
+                demo,
             )))
         }),
     )

@@ -135,7 +135,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 ui.selectable_value(&mut app.analysis_draft.provider, kind, kind.label());
             }
         });
-        if app.analysis_draft.provider != ProviderKind::Fixture {
+        if app.analysis_draft.provider == ProviderKind::BwRfc {
+            ui.small("Leading production path, pending landscape confirmation. Requires a company-provided licensed RFC SDK, verified OLAP BAPIs and approved authentication. No SDK is loaded; Connect reports unavailable. HTTP Basic/XMLA does not implement RFC/SNC.");
+        } else if app.analysis_draft.provider != ProviderKind::Fixture {
             ui.label("BW analytical endpoint");
             ui.add(
                 egui::TextEdit::singleline(&mut app.analysis_draft.analytical_url)
@@ -149,12 +151,12 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         if ui.button("Apply connection settings").clicked() {
             let config = ConnectionConfig {
                 provider: app.analysis_draft.provider,
-                analytical_url: if app.analysis_draft.provider == ProviderKind::Fixture {
+                analytical_url: if matches!(app.analysis_draft.provider, ProviderKind::Fixture | ProviderKind::BwRfc) {
                     String::new()
                 } else {
                     app.analysis_draft.analytical_url.clone()
                 },
-                repository_url: if app.analysis_draft.provider == ProviderKind::Fixture {
+                repository_url: if matches!(app.analysis_draft.provider, ProviderKind::Fixture | ProviderKind::BwRfc) {
                     String::new()
                 } else {
                     app.analysis_draft.repository_url.clone()
@@ -173,6 +175,12 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     });
     if pending && ui.button("Cancel request").clicked() {
         app.run_or_alert("analysis.cancel", json!({}));
+    }
+    if provider == ProviderKind::BwRfc {
+        ui.separator();
+        ui.strong("RFC adapter unavailable");
+        ui.small("Transport, authentication and analytical functions are separate. BICS is not a public SDK surface. See the RFC adapter design for prerequisites; the local XMLA simulator tests only the alternative XMLA path.");
+        return;
     }
     if provider != ProviderKind::Fixture {
         show_bw(app, ui, connected, pending, report.is_some(), metadata);

@@ -10,6 +10,12 @@ not a port of SAP binaries or source and not an SAP-certified client.
 
 ## Run
 
+For the HTTP-backed one-command demo, build `gridcraft` and `gridcraft-bw-sim`, then run
+`target/debug/gridcraft --bw-demo` (Windows: `.exe`). The portable Windows package contains
+`START-DEMO.cmd`. See [the work-agent handoff](work-agent-handoff.md) and
+[unavailable RFC scaffold/design](rfc-adapter-design.md). The command below is the separate
+in-process fixture mode.
+
 Use Rust **1.95.0** (pinned in `rust-toolchain.toml`), matching the pinned egui 0.36 dependencies.
 The upstream workspace declared Rust 1.90, but its dependencies require 1.95. On the connected
 Mac, `tools/cargo-local` selects the toolchain installed in the task's sibling `.rustup` directory;
@@ -84,9 +90,11 @@ These same commands are available to MCP and the desktop JSON control channel:
 | `analysis.xmla.discoverRequest` | `rowset`, optional `catalog`, `cube`; builds SOAP, never sends |
 | `analysis.xmla.executeRequest` | `catalog`, `mdx`; builds restricted read-only SOAP, never sends |
 | `analysis.xmla.parse` | `xml`; returns bounded rowset, does not import into cells |
+| `analysis.rfc.capabilities` | Reports unavailable RFC capability and prerequisites; no network or SDK loading |
+| `analysis.rfc.validateConfig` | Validates a nonsecret RFC/SNC draft only; never connects or persists it |
 
 All analysis commands reject unknown fields and avoid the replay journal. Connection commands
-accept no passwords or tokens. The XMLA providers connect through native transport. The BW RFC/BICS and HANA InA adapters
+accept no passwords or tokens. The XMLA providers connect through native transport. The BW RFC/OLAP and HANA InA adapters
 remain unavailable and return explicit errors. Errors never imply live success.
 
 ## Report ownership, refresh and persistence

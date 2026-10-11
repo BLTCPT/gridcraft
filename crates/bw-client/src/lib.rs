@@ -74,6 +74,10 @@ impl Client {
             .connect_timeout(self.timeout.min(Duration::from_secs(10)))
             .build()
             .map_err(|_| "Could not initialize BW TLS transport.")?;
+        // Cancellation may happen while endpoint policy, credentials or TLS client are prepared.
+        if request.canceled.load(Ordering::Relaxed) {
+            return Err("BW request canceled before transmission.".into());
+        }
         let response = client
             .post(url)
             .basic_auth(user, Some(password))
